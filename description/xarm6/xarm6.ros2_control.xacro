@@ -4,7 +4,7 @@
     params="prefix
     velocity_control:='false'
     ros2_control_plugin:='uf_robot_hardware/UFRobotSystemHardware'
-    hw_ns:='xarm' add_gripper:='false' add_bio_gripper:='false'
+    hw_ns:='xarm' add_gripper:='true' add_bio_gripper:='false'
     robot_ip:='' report_type:='normal' baud_checkset:='true' default_gripper_baud:=2000000
     joint1_lower_limit:=${-2.0*pi}  joint1_upper_limit:=${2.0*pi}
     joint2_lower_limit:=${-2.059}  joint2_upper_limit:=${2.0944}

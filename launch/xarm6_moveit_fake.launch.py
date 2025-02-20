@@ -37,7 +37,7 @@ def generate_launch_description():
         executable='default_server_endpoint'
     )
 
-    with open("description/xarm6/xarm6.urdf", 'r') as f:
+    with open("description/xarm6/xarm6_with_gripper.urdf", 'r') as f:
         robot_description = f.read() 
 
     robot_state_publisher_node = Node(
@@ -68,7 +68,7 @@ def generate_launch_description():
         package='controller_manager',
         executable='ros2_control_node',
         parameters=[
-            'description/xarm6/xarm6.urdf',
+            'description/xarm6/xarm6_with_gripper.urdf',
             'param/xarm6_controllers.yaml',
             # robot_params,
         ],
@@ -86,11 +86,11 @@ def generate_launch_description():
         ],
     )
 
-    add_gripper = False
+    add_gripper = True
 
     controllers = ['xarm6_traj_controller']
-    if add_gripper and 'xarm6' != 'lite':
-        controllers.append('xarm6_gripper_traj_controller')
+    if add_gripper:
+        controllers.append('xarm_gripper_traj_controller')
 
     # Load controllers
     controller_nodes = []

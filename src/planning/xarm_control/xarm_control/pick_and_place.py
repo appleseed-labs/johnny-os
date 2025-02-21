@@ -102,6 +102,7 @@ class PickAndPlaceNode(Node):
         self.get_logger().info(
             f"Moving to {{position: {list(position)}, quat_xyzw: {list(quat_xyzw)}}}"
         )
+
         moveit2.move_to_pose(
             position=position,
             quat_xyzw=quat_xyzw,

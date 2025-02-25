@@ -104,11 +104,11 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            joint_state_broadcaster,
-            robot_moveit_common_launch,
+            # joint_state_broadcaster,
+            # robot_moveit_common_launch,
             robot_state_publisher_node,
-            ros2_control_node,
+            # ros2_control_node,
             unity_endpoint,
         ]
-        + controller_nodes
+        # + controller_nodes
     )

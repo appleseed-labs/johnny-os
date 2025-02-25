@@ -15,134 +15,208 @@ from rclpy.node import Node
 from pymoveit2 import MoveIt2, MoveIt2State
 from pymoveit2.robots import panda as robot
 from random import random
+from sensor_msgs.msg import JointState
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+from ikpy.chain import Chain
+from ikpy.link import Link
+from ikpy.utils import plot
+from matplotlib import pyplot as plt
 
 
 class PickAndPlaceNode(Node):
     def __init__(self):
         super().__init__("pick_and_place_node")
 
-        # Declare parameters for position and orientation
-        self.declare_parameter("position", [random() / 3, random() / 3, random() / 3])
-        self.declare_parameter("quat_xyzw", [1.0, 0.0, 0.0, 0.0])
-        self.declare_parameter("synchronous", True)
-        # If non-positive, don't cancel. Only used if synchronous is False
-        self.declare_parameter("cancel_after_secs", 0.0)
-        # Planner ID
-        self.declare_parameter("planner_id", "")
-        # Declare parameters for cartesian planning
-        self.declare_parameter("cartesian", False)
-        self.declare_parameter("cartesian_max_step", 0.0025)
-        self.declare_parameter("cartesian_fraction_threshold", 0.0)
-        self.declare_parameter("cartesian_jump_threshold", 0.0)
-        self.declare_parameter("cartesian_avoid_collisions", False)
+        self.create_subscription(JointState, "/joint_states", self.jointStateCb, 10)
 
-        # Create callback group that allows execution of callbacks in parallel without restrictions
-        callback_group = ReentrantCallbackGroup()
-
-        # Create MoveIt 2 interface
-        moveit2 = MoveIt2(
-            node=self,
-            joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
-            base_link_name="link_base",
-            end_effector_name="link6",
-            group_name="xarm6",
-            callback_group=callback_group,
-        )
-        moveit2.planner_id = (
-            self.get_parameter("planner_id").get_parameter_value().string_value
+        self.joint_command_pub = self.create_publisher(
+            JointState, "/joint_commands", 10
         )
 
-        # Spin the node in background thread(s) and wait a bit for initialization
-        executor = rclpy.executors.MultiThreadedExecutor(2)
-        executor.add_node(self)
-        executor_thread = Thread(target=executor.spin, daemon=True, args=())
-        executor_thread.start()
-        self.create_rate(1.0).sleep()
+        # # a, alpha, d
+        # self.dh_params = [
+        #     [0, -np.pi / 2, 0.267],
+        #     [0.28948866, 0, 0],
+        #     [0.0775, -np.pi / 2, 0],
+        #     [0, np.pi / 2, 0.3425],
+        #     [0.076, -np.pi / 2, 0],
+        #     [0, 0, 0.097],
+        # ]
 
-        # Scale down velocity and acceleration of joints (percentage of maximum)
-        moveit2.max_velocity = 0.5
-        moveit2.max_acceleration = 0.5
+        # self.target_pose = [0.2, 0.2, 0.2, 0.0, 1.5, 0.0]  # xyzrpy
 
-        # Get parameters
-        position = (
-            self.get_parameter("position").get_parameter_value().double_array_value
-        )
-        quat_xyzw = (
-            self.get_parameter("quat_xyzw").get_parameter_value().double_array_value
-        )
-        synchronous = self.get_parameter("synchronous").get_parameter_value().bool_value
-        cancel_after_secs = (
-            self.get_parameter("cancel_after_secs").get_parameter_value().double_value
-        )
-        cartesian = self.get_parameter("cartesian").get_parameter_value().bool_value
-        cartesian_max_step = (
-            self.get_parameter("cartesian_max_step").get_parameter_value().double_value
-        )
-        cartesian_fraction_threshold = (
-            self.get_parameter("cartesian_fraction_threshold")
-            .get_parameter_value()
-            .double_value
-        )
-        cartesian_jump_threshold = (
-            self.get_parameter("cartesian_jump_threshold")
-            .get_parameter_value()
-            .double_value
-        )
-        cartesian_avoid_collisions = (
-            self.get_parameter("cartesian_avoid_collisions")
-            .get_parameter_value()
-            .bool_value
+        # joint_angles = self.getInverseKinematics(
+        #     self.dh_params, self.target_pose
+        # ).tolist()
+        # print(joint_angles)
+
+        chain = Chain.from_urdf_file(
+            "description/xarm6/xarm6.urdf", base_elements=["link_base"]
         )
 
-        # Set parameters for cartesian planning
-        moveit2.cartesian_avoid_collisions = cartesian_avoid_collisions
-        moveit2.cartesian_jump_threshold = cartesian_jump_threshold
+        from mpl_toolkits.mplot3d import Axes3D
 
-        # Move to pose
-        self.get_logger().info(
-            f"Moving to {{position: {list(position)}, quat_xyzw: {list(quat_xyzw)}}}"
+        fig, ax = plot.init_3d_figure()
+        # chain.plot([0] * (len(chain)), ax)
+        ax.legend()
+
+        target_orientation = [0, 0, 0]
+        target_position = [0.6, 0.0, 0.0]
+
+        # Compute the inverse kinematics with position
+        ik = chain.inverse_kinematics(
+            target_position, target_orientation, orientation_mode="X"
+        )
+        # ik = chain.inverse_kinematics(target_position)
+
+        # Let's see what are the final positions and orientations of the robot
+        position = chain.forward_kinematics(ik)[:3, 3]
+        orientation = chain.forward_kinematics(ik)[:3, 0]
+
+        # And compare them with was what required
+        print(
+            "Requested position: {} vs Reached position: {}".format(
+                target_position, position
+            )
+        )
+        print(
+            "Requested orientation on the X axis: {} vs Reached orientation on the X axis: {}".format(
+                target_orientation, orientation
+            )
+        )
+        # We see that the chain reached its position!
+
+        # Plot how it goes
+        fig, ax = plot.init_3d_figure()
+        chain.plot(ik, ax)
+        ax.legend()
+        plt.xlim([-0.3, 0.3])
+        plt.ylim([-0.3, 0.3])
+
+        self.joint_command_pub.publish(self.getJointCommandMsg(ik[1:7]))
+        # self.joint_command_pub.publish(self.getJointCommandMsg(np.zeros(6)))
+
+        # plt.show()
+        # print(chain)
+        print(chain)
+
+        print(ik)
+
+    def getJointCommandMsg(self, q: list[float]):
+
+        if isinstance(q, np.ndarray):
+            q = q.tolist()
+
+        msg = JointState()
+        msg.name = ["link1", "link2", "link3", "link4", "link5", "link6"]
+        print(q)
+        msg.position = q
+
+        assert len(msg.position) == len(msg.name)
+
+        return msg
+
+    def jointStateCb(self, msg: JointState):
+        # print(msg)
+        pass
+
+    def getHomogTf(self, a, alpha, d, theta):
+        T = np.array(
+            [
+                [
+                    np.cos(theta),
+                    -np.sin(theta) * np.cos(alpha),
+                    np.sin(theta) * np.sin(alpha),
+                    a * np.cos(theta),
+                ],
+                [
+                    np.sin(theta),
+                    np.cos(theta) * np.cos(alpha),
+                    -np.cos(theta) * np.sin(alpha),
+                    a * np.sin(theta),
+                ],
+                [0, np.sin(alpha), np.cos(alpha), d],
+                [0, 0, 0, 1],
+            ]
         )
 
-        moveit2.move_to_pose(
-            position=position,
-            quat_xyzw=quat_xyzw,
-            cartesian=cartesian,
-            cartesian_max_step=cartesian_max_step,
-            cartesian_fraction_threshold=cartesian_fraction_threshold,
+        return T
+
+    # Translated from https://github.com/vla-gove/InverseKinematics/blob/main/InverseKinematics/InverseKinematics/InverseKinematics.cpp
+    def getInverseKinematics(self, dh_params: list[float], target_pose: list[float]):
+        x, y, z, roll, pitch, yaw = target_pose
+
+        # Rotation matrix of end effector
+        R: np.ndarray = Rotation.from_euler(
+            "xyz", [roll, pitch, yaw], degrees=False
+        ).as_matrix()
+
+        joint_angles = np.zeros(6)
+
+        p_e = R.T @ [x, y, z]  # position of end effector in base frame
+        p_e *= -1
+
+        print(p_e)
+
+        # joint angles using closed-form solution method
+
+        # joint_angles(0) = atan2(p_e(1), p_e(0)) - atan2(dh_params[0].d, sqrt(p_e(0)*p_e(0) + p_e(1)*p_e(1) - dh_params[0].d*dh_params[0].d));
+        # joint_angles(1) = atan2(sqrt(p_e(0)*p_e(0) + p_e(1)*p_e(1) - dh_params[0].d*dh_params[0].d), -dh_params[0].d) + atan2(p_e(2) - dh_params[0].a, sqrt(p_e(0)*p_e(0) + p_e(1)*p_e(1) - dh_params[0].d*dh_params[0].d));
+        # joint_angles(2) = atan2(dh_params[2].d, dh_params[1].a) - atan2(sqrt(p_e(0)*p_e(0) + p_e(1)*p_e(1) - dh_params[0].d*dh_params[0].d), p_e(2) - dh_params[0].a);
+
+        joint_angles[0] = np.arctan2(p_e[1], p_e[0]) - np.arctan2(
+            dh_params[0][2], np.sqrt(p_e[0] ** 2 + p_e[1] ** 2 - dh_params[0][2] ** 2)
         )
-        if synchronous:
-            # Note: the same functionality can be achieved by setting
-            # `synchronous:=false` and `cancel_after_secs` to a negative value.
-            moveit2.wait_until_executed()
-        else:
-            # Wait for the request to get accepted (i.e., for execution to start)
-            print("Current State: " + str(moveit2.query_state()))
-            rate = self.create_rate(10)
-            while moveit2.query_state() != MoveIt2State.EXECUTING:
-                rate.sleep()
+        joint_angles[1] = np.arctan2(
+            np.sqrt(p_e[0] ** 2 + p_e[1] ** 2 - dh_params[0][2] ** 2), -dh_params[0][2]
+        ) + np.arctan2(
+            p_e[2] - dh_params[0][0],
+            np.sqrt(p_e[0] ** 2 + p_e[1] ** 2 - dh_params[0][2] ** 2),
+        )
+        joint_angles[2] = np.arctan2(dh_params[2][2], dh_params[1][0]) - np.arctan2(
+            np.sqrt(p_e[0] ** 2 + p_e[1] ** 2 - dh_params[0][2] ** 2),
+            p_e[2] - dh_params[0][0],
+        )
 
-            # Get the future
-            print("Current State: " + str(moveit2.query_state()))
-            future = moveit2.get_execution_future()
+        # rotation matrix of the end effector with respect to the base frame
+        R_b_e = R.copy()  # TODO: Check this
+        # R_b_e.col(0) = R.col(0);
+        # R_b_e.col(1) = R.col(1);
+        # R_b_e.col(2) = R.col(2);
 
-            # Cancel the goal
-            if cancel_after_secs > 0.0:
-                # Sleep for the specified time
-                sleep_time = self.create_rate(cancel_after_secs)
-                sleep_time.sleep()
-                # Cancel the goal
-                print("Cancelling goal")
-                moveit2.cancel_execution()
+        # joint angles for the remaining joints
 
-            # Wait until the future is done
-            while not future.done():
-                rate.sleep()
+        for i in range(3, 6):
+            R_b_j = self.getHomogTf(
+                dh_params[i - 1][0],
+                dh_params[i - 1][2],
+                dh_params[i - 1][1],
+                joint_angles[i - 1],
+            )[:3, :3]
+            R_j_e = R_b_j.T * R_b_e
+            joint_angles[i] = np.arctan2(
+                np.sqrt(R_j_e[0, 2] ** 2 + R_j_e[2, 2] ** 2), R_j_e[1, 2]
+            )
 
-            # Print the result
-            print("Result status: " + str(future.result().status))
-            print("Result error code: " + str(future.result().result.error_code))
+            if R_j_e[2, 2] < 0:
+                joint_angles[i] = -joint_angles[i]
+            if R_j_e[0, 2] < 0:
+                joint_angles[i] = -joint_angles[i]
+            joint_angles[i] += joint_angles[i - 1]
 
-        self.get_logger().info(f"DONE")
+        # for (int i = 3; i < 6; i++)
+        # {
+        #     Matrix3d R_b_j = HomogeneousTransformation(dh_params[i - 1].a, dh_params[i - 1].d, dh_params[i - 1].alpha, joint_angles(i - 1)).block<3, 3>(0, 0);
+        #     Matrix3d R_j_e = R_b_j.transpose() * R_b_e;
+        #     joint_angles(i) = atan2(sqrt(R_j_e(0, 2)*R_j_e(0, 2) + R_j_e(2, 2)*R_j_e(2, 2)), R_j_e(1, 2));
+        #     if (R_j_e(2, 2) < 0) joint_angles(i) = -joint_angles(i);
+        #     if (R_j_e(0, 2) < 0) joint_angles(i) = -joint_angles(i);
+        #     joint_angles(i) += joint_angles(i - 1);
+        # }
+
+        return joint_angles
 
 
 def main(args=None):

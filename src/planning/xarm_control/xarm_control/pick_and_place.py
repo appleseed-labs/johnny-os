@@ -24,12 +24,18 @@ from ikpy.link import Link
 from ikpy.utils import plot
 from matplotlib import pyplot as plt
 
+from geometry_msgs.msg import Point
+from time import sleep
+from std_msgs.msg import Bool
+
 
 class PickAndPlaceNode(Node):
     def __init__(self):
         super().__init__("pick_and_place_node")
 
         self.create_subscription(JointState, "/joint_states", self.jointStateCb, 10)
+        # self.create_subscription(Point, "/ecosim/clicked_point", self.clickedPointCb, 1)
+        self.close_gripper_pub = self.create_publisher(Bool, "/close_gripper", 1)
 
         self.joint_command_pub = self.create_publisher(
             JointState, "/joint_commands", 10
@@ -52,59 +58,112 @@ class PickAndPlaceNode(Node):
         # ).tolist()
         # print(joint_angles)
 
-        chain = Chain.from_urdf_file(
+        self.chain = Chain.from_urdf_file(
             "description/xarm6/xarm6.urdf", base_elements=["link_base"]
         )
 
-        from mpl_toolkits.mplot3d import Axes3D
+        self.current_joints = np.zeros(8)
 
-        fig, ax = plot.init_3d_figure()
-        # chain.plot([0] * (len(chain)), ax)
-        ax.legend()
+        self.doPickAndPlace()
 
-        target_orientation = [0, 0, 0]
-        target_position = [0.6, 0.0, 0.0]
+    def doPickAndPlace(self):
 
-        # Compute the inverse kinematics with position
-        ik = chain.inverse_kinematics(
-            target_position, target_orientation, orientation_mode="X"
-        )
-        # ik = chain.inverse_kinematics(target_position)
+        vertical_offset = 0.1  # meters
+        EUCLIDEAN_TOLERANCE = 0.03  # Allowed distance error in meters
+        # target_pos = [msg.x, msg.y, msg.z + vertical_offset]
+        # target_pos = [msg.x, msg.y, vertical_offset]
 
-        # Let's see what are the final positions and orientations of the robot
-        position = chain.forward_kinematics(ik)[:3, 3]
-        orientation = chain.forward_kinematics(ik)[:3, 0]
+        for z in np.arange(0.0, 0.45, 0.05):
+            target_pos = [0.0, 0.63, 0.5 - z]
 
-        # And compare them with was what required
-        print(
-            "Requested position: {} vs Reached position: {}".format(
-                target_position, position
+            # Assume we want EEF pointed straight down
+            target_orientation = Rotation.from_euler(
+                "xyz", [-np.pi / 2, np.pi / 2, 0.0]
+            ).as_matrix()
+
+            ik = self.chain.inverse_kinematics(
+                target_pos, initial_position=self.current_joints
             )
-        )
-        print(
-            "Requested orientation on the X axis: {} vs Reached orientation on the X axis: {}".format(
-                target_orientation, orientation
+            ik = self.chain.inverse_kinematics(
+                target_pos,
+                target_orientation,
+                initial_position=ik,
+                orientation_mode="all",
             )
-        )
-        # We see that the chain reached its position!
 
-        # Plot how it goes
-        fig, ax = plot.init_3d_figure()
-        chain.plot(ik, ax)
-        ax.legend()
-        plt.xlim([-0.3, 0.3])
-        plt.ylim([-0.3, 0.3])
+            self.current_joints = ik
 
-        self.joint_command_pub.publish(self.getJointCommandMsg(ik[1:7]))
-        # self.joint_command_pub.publish(self.getJointCommandMsg(np.zeros(6)))
+            print(type(self.current_joints))
+            print(f"RESULT: {ik}")
 
-        # plt.show()
-        # print(chain)
-        print(chain)
+            # print(f"Target: {[msg.x, msg.y, msg.z]}")
+            reached_pos = self.chain.forward_kinematics(ik)[:3, 3]
+            # print(f"Result: {reached_pos}")
 
-        print(ik)
+            euclidean_error = np.linalg.norm(target_pos - reached_pos)
+            # print(f"Error: {euclidean_error}")
 
-    def getJointCommandMsg(self, q: list[float]):
+            if euclidean_error > EUCLIDEAN_TOLERANCE:
+                self.get_logger().warning(f"Euclidean error {euclidean_error} > 1 cm")
+            else:
+                self.joint_command_pub.publish(self.toJointCommandMsg(ik[1:7]))
+
+            sleep(0.1)
+
+        print("DONE")
+
+        self.close_gripper_pub.publish(Bool(data=True))
+
+        self.pointToSky()
+        sleep(1.0)
+
+        for z in np.arange(0.0, 0.45, 0.05):
+            target_pos = [0.0, -0.63, 0.5 - z]
+
+            # Assume we want EEF pointed straight down
+            target_orientation = Rotation.from_euler(
+                "xyz", [np.pi / 2, np.pi / 2, 0.0]
+            ).as_matrix()
+
+            ik = self.chain.inverse_kinematics(
+                target_pos, initial_position=self.current_joints
+            )
+
+            if z > 0.25:
+                ik = self.chain.inverse_kinematics(
+                    target_pos,
+                    target_orientation,
+                    initial_position=ik,
+                    orientation_mode="all",
+                )
+
+            self.current_joints = ik
+
+            print(type(self.current_joints))
+            print(f"RESULT: {ik}")
+
+            # print(f"Target: {[msg.x, msg.y, msg.z]}")
+            reached_pos = self.chain.forward_kinematics(ik)[:3, 3]
+            # print(f"Result: {reached_pos}")
+
+            euclidean_error = np.linalg.norm(target_pos - reached_pos)
+            # print(f"Error: {euclidean_error}")
+
+            self.joint_command_pub.publish(self.toJointCommandMsg(ik[1:7]))
+
+            sleep(0.1)
+
+        self.close_gripper_pub.publish(Bool(data=False))
+
+    def pointToSky(self):
+        target_pos = [0.0, 0.0, 1.0]
+        ik = self.chain.inverse_kinematics(target_pos)
+        self.joint_command_pub.publish(self.toJointCommandMsg(ik[1:7]))
+
+    def moveToHome(self):
+        self.joint_command_pub.publish(self.toJointCommandMsg(np.zeros(6)))
+
+    def toJointCommandMsg(self, q: list[float]):
 
         if isinstance(q, np.ndarray):
             q = q.tolist()

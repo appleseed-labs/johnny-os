@@ -9,11 +9,10 @@ Example of moving to a pose goal.
 from threading import Thread
 
 import rclpy
-from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
+from builtin_interfaces.msg import Time as BuiltinTime
+from rclpy.time import Time as RclpyTime
 
-from pymoveit2 import MoveIt2, MoveIt2State
-from pymoveit2.robots import panda as robot
 from random import random
 from sensor_msgs.msg import JointState
 import numpy as np
@@ -29,49 +28,228 @@ from time import sleep
 from std_msgs.msg import Bool
 
 
+class JointTrajectory:
+    """Stores a sequence of joint positions, with times associated with each point in the sequence"""
+
+    Q: np.ndarray  # List of joint positions
+    T: np.ndarray  # Times for each joint position group (sec), starting from zero
+    names: list[str]
+
+    def __init__(
+        self,
+        Q: np.ndarray,
+        T: np.ndarray,
+        names: list[str] = ["link1", "link2", "link3", "link4", "link5", "link6"],
+    ):
+        assert len(Q) == len(
+            T
+        ), f"Tried to create JointTrajectory with {len(T)} times and {len(Q)} joint frames"
+
+        self.Q = Q
+        self.T = T
+        self.names = names
+
+    def toJointStateMsgs(self, t0=0.0) -> list[JointState]:
+        assert len(self.Q) == len(self.T)
+        assert isinstance(self.Q, np.ndarray)
+        assert isinstance(self.T, np.ndarray)
+
+        joint_state_msgs = []
+
+        for i, frame in enumerate(self.Q[:]):
+            msg = JointState()
+            msg.position = frame.tolist()
+            msg.name = self.names
+            msg.header.frame_id = "link_base"
+            msg.header.stamp = getStamp(self.T[i] + t0)
+
+            joint_state_msgs.append(msg)
+
+        return joint_state_msgs
+
+
+def getStraightLineTrajectoryInJointSpace(
+    q_start: np.ndarray, q_end: np.ndarray, duration, dt, slice_joints=False
+) -> JointTrajectory:
+    assert len(q_start) == len(q_end)
+    dq = q_end - q_start
+
+    n_steps = int(duration / dt)
+    dq_t = dq / n_steps  # The change in ejoint positions to make at each step
+
+    qs = []
+    ts = []
+
+    print(n_steps)
+
+    for i in range(1, n_steps + 1):
+        qs.append(q_start + i * dq_t)
+        ts.append(i * dt)
+
+    if slice_joints:
+        return JointTrajectory(np.asarray(qs)[:, 1:7], np.asarray(ts))
+    else:
+        return JointTrajectory(np.asarray(qs), np.asarray(ts))
+
+
+def getStraightLineTrajectoryInTaskSpace(
+    chain: Chain,
+    q_start: np.ndarray,
+    q_end: np.ndarray,
+    duration,
+    dt,
+    slice_joints=False,
+) -> JointTrajectory:
+    assert len(q_start) == len(q_end)
+
+    pos_start = chain.forward_kinematics(q_start)[:3, 3]
+    pos_end = chain.forward_kinematics(q_end)[:3, 3]
+
+    d_pos = pos_end - pos_start
+
+    n_steps = int(duration / dt)
+    d_pos_t = (
+        d_pos / n_steps
+    )  # The change in end effector position to make at each step
+
+    qs = []
+    ts = []
+
+    print(n_steps)
+
+    # fig, (ax) = plt.subplots(1, 1)
+
+    initial_guess = q_start
+
+    for i in range(1, n_steps + 1):
+        pos_i = pos_start + d_pos_t * i
+        print(pos_i)
+        # ax.scatter(pos_i[1], pos_i[2])
+
+        ik = chain.inverse_kinematics(pos_i, initial_position=initial_guess)
+
+        initial_guess = ik
+
+        qs.append(ik)
+        ts.append(i * dt)
+
+    # plt.show()
+
+    if slice_joints:
+        return JointTrajectory(np.asarray(qs)[:, 1:7], np.asarray(ts))
+    else:
+        return JointTrajectory(np.asarray(qs), np.asarray(ts))
+
+
+def plotTrajectory(traj: JointTrajectory):
+    fig, (ax) = plt.subplots(1, 1)
+
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("q (rad)")
+
+    for joint in traj.Q[:].T:
+        # "joint" is the vector of joint angles for a single joint across all timesteps
+        print(joint)
+        ax.plot(traj.T, joint)
+
+    print(traj.T)
+
+    plt.show()
+
+
+def getSecs(rostime):
+    print(type(rostime))
+    print(rostime)
+    if isinstance(rostime, RclpyTime):
+        return rostime.nanoseconds / 1e9
+    elif isinstance(rostime, BuiltinTime):
+        return rostime.sec + rostime.nanosec * 1e-9
+    else:
+        raise NotImplementedError
+
+
+def getStamp(secs: float) -> BuiltinTime:
+    rostime = BuiltinTime()
+    rostime.sec = int(secs)
+    rostime.nanosec = (int)((secs - rostime.sec) * 1e9)
+    return rostime
+
+
 class PickAndPlaceNode(Node):
     def __init__(self):
         super().__init__("pick_and_place_node")
 
         self.create_subscription(JointState, "/joint_states", self.jointStateCb, 10)
-        # self.create_subscription(Point, "/ecosim/clicked_point", self.clickedPointCb, 1)
-        self.close_gripper_pub = self.create_publisher(Bool, "/close_gripper", 1)
 
         self.joint_command_pub = self.create_publisher(
             JointState, "/joint_commands", 10
         )
 
-        # # a, alpha, d
-        # self.dh_params = [
-        #     [0, -np.pi / 2, 0.267],
-        #     [0.28948866, 0, 0],
-        #     [0.0775, -np.pi / 2, 0],
-        #     [0, np.pi / 2, 0.3425],
-        #     [0.076, -np.pi / 2, 0],
-        #     [0, 0, 0.097],
-        # ]
-
-        # self.target_pose = [0.2, 0.2, 0.2, 0.0, 1.5, 0.0]  # xyzrpy
-
-        # joint_angles = self.getInverseKinematics(
-        #     self.dh_params, self.target_pose
-        # ).tolist()
-        # print(joint_angles)
+        self.close_gripper_pub = self.create_publisher(Bool, "/close_gripper", 1)
 
         self.chain = Chain.from_urdf_file(
             "description/xarm6/xarm6.urdf", base_elements=["link_base"]
         )
 
-        self.current_joints = np.zeros(8)
+        self.current_joints = np.zeros(8)  # Serves as initial guess for IK optimization
 
         self.doPickAndPlace()
+        exit()
+
+    def doTrajectory(self, traj: JointTrajectory):
+
+        t0 = getSecs(self.get_clock().now())
+        msgs = traj.toJointStateMsgs(t0=t0)
+
+        t = 0
+
+        for i, msg in enumerate(msgs[:-1]):
+            self.joint_command_pub.publish(msg)
+
+            next_msg = msgs[i + 1]
+            dt = getSecs(next_msg.header.stamp) - getSecs(msg.header.stamp)
+            assert dt > 0
+
+            t += dt
+
+            print(f"t = {t} | q = {msg.position}")
+
+            sleep(dt)  # TODO: Make async
+
+        self.joint_command_pub.publish(msgs[-1])
 
     def doPickAndPlace(self):
-
-        vertical_offset = 0.1  # meters
         EUCLIDEAN_TOLERANCE = 0.03  # Allowed distance error in meters
         # target_pos = [msg.x, msg.y, msg.z + vertical_offset]
         # target_pos = [msg.x, msg.y, vertical_offset]
+
+        # Move from home position to just above seedling
+        target_pos = [0.0, 0.0, 0.8]
+
+        target_orientation = Rotation.from_euler(
+            "xyz", [-np.pi / 2, np.pi / 2, 0.0]
+        ).as_matrix()
+        ik = self.chain.inverse_kinematics(
+            target_pos, initial_position=self.current_joints
+        )
+        ik = self.chain.inverse_kinematics(
+            target_pos,
+            target_orientation,
+            initial_position=ik,
+            orientation_mode="all",
+        )
+
+        traj = getStraightLineTrajectoryInJointSpace(
+            self.current_joints, ik, 3.0, 0.1, slice_joints=True
+        )
+        traj = getStraightLineTrajectoryInTaskSpace(
+            self.chain, self.current_joints, ik, 3.0, 0.1, slice_joints=True
+        )
+        plotTrajectory(traj)
+
+        self.doTrajectory(traj)
+
+        exit()
 
         for z in np.arange(0.0, 0.45, 0.05):
             target_pos = [0.0, 0.63, 0.5 - z]
@@ -178,118 +356,22 @@ class PickAndPlaceNode(Node):
         return msg
 
     def jointStateCb(self, msg: JointState):
-        # print(msg)
+        """Called when new JointState received.
+
+        Args:
+            msg (JointState): Current joint positions
+        """
         pass
-
-    def getHomogTf(self, a, alpha, d, theta):
-        T = np.array(
-            [
-                [
-                    np.cos(theta),
-                    -np.sin(theta) * np.cos(alpha),
-                    np.sin(theta) * np.sin(alpha),
-                    a * np.cos(theta),
-                ],
-                [
-                    np.sin(theta),
-                    np.cos(theta) * np.cos(alpha),
-                    -np.cos(theta) * np.sin(alpha),
-                    a * np.sin(theta),
-                ],
-                [0, np.sin(alpha), np.cos(alpha), d],
-                [0, 0, 0, 1],
-            ]
-        )
-
-        return T
-
-    # Translated from https://github.com/vla-gove/InverseKinematics/blob/main/InverseKinematics/InverseKinematics/InverseKinematics.cpp
-    def getInverseKinematics(self, dh_params: list[float], target_pose: list[float]):
-        x, y, z, roll, pitch, yaw = target_pose
-
-        # Rotation matrix of end effector
-        R: np.ndarray = Rotation.from_euler(
-            "xyz", [roll, pitch, yaw], degrees=False
-        ).as_matrix()
-
-        joint_angles = np.zeros(6)
-
-        p_e = R.T @ [x, y, z]  # position of end effector in base frame
-        p_e *= -1
-
-        print(p_e)
-
-        # joint angles using closed-form solution method
-
-        # joint_angles(0) = atan2(p_e(1), p_e(0)) - atan2(dh_params[0].d, sqrt(p_e(0)*p_e(0) + p_e(1)*p_e(1) - dh_params[0].d*dh_params[0].d));
-        # joint_angles(1) = atan2(sqrt(p_e(0)*p_e(0) + p_e(1)*p_e(1) - dh_params[0].d*dh_params[0].d), -dh_params[0].d) + atan2(p_e(2) - dh_params[0].a, sqrt(p_e(0)*p_e(0) + p_e(1)*p_e(1) - dh_params[0].d*dh_params[0].d));
-        # joint_angles(2) = atan2(dh_params[2].d, dh_params[1].a) - atan2(sqrt(p_e(0)*p_e(0) + p_e(1)*p_e(1) - dh_params[0].d*dh_params[0].d), p_e(2) - dh_params[0].a);
-
-        joint_angles[0] = np.arctan2(p_e[1], p_e[0]) - np.arctan2(
-            dh_params[0][2], np.sqrt(p_e[0] ** 2 + p_e[1] ** 2 - dh_params[0][2] ** 2)
-        )
-        joint_angles[1] = np.arctan2(
-            np.sqrt(p_e[0] ** 2 + p_e[1] ** 2 - dh_params[0][2] ** 2), -dh_params[0][2]
-        ) + np.arctan2(
-            p_e[2] - dh_params[0][0],
-            np.sqrt(p_e[0] ** 2 + p_e[1] ** 2 - dh_params[0][2] ** 2),
-        )
-        joint_angles[2] = np.arctan2(dh_params[2][2], dh_params[1][0]) - np.arctan2(
-            np.sqrt(p_e[0] ** 2 + p_e[1] ** 2 - dh_params[0][2] ** 2),
-            p_e[2] - dh_params[0][0],
-        )
-
-        # rotation matrix of the end effector with respect to the base frame
-        R_b_e = R.copy()  # TODO: Check this
-        # R_b_e.col(0) = R.col(0);
-        # R_b_e.col(1) = R.col(1);
-        # R_b_e.col(2) = R.col(2);
-
-        # joint angles for the remaining joints
-
-        for i in range(3, 6):
-            R_b_j = self.getHomogTf(
-                dh_params[i - 1][0],
-                dh_params[i - 1][2],
-                dh_params[i - 1][1],
-                joint_angles[i - 1],
-            )[:3, :3]
-            R_j_e = R_b_j.T * R_b_e
-            joint_angles[i] = np.arctan2(
-                np.sqrt(R_j_e[0, 2] ** 2 + R_j_e[2, 2] ** 2), R_j_e[1, 2]
-            )
-
-            if R_j_e[2, 2] < 0:
-                joint_angles[i] = -joint_angles[i]
-            if R_j_e[0, 2] < 0:
-                joint_angles[i] = -joint_angles[i]
-            joint_angles[i] += joint_angles[i - 1]
-
-        # for (int i = 3; i < 6; i++)
-        # {
-        #     Matrix3d R_b_j = HomogeneousTransformation(dh_params[i - 1].a, dh_params[i - 1].d, dh_params[i - 1].alpha, joint_angles(i - 1)).block<3, 3>(0, 0);
-        #     Matrix3d R_j_e = R_b_j.transpose() * R_b_e;
-        #     joint_angles(i) = atan2(sqrt(R_j_e(0, 2)*R_j_e(0, 2) + R_j_e(2, 2)*R_j_e(2, 2)), R_j_e(1, 2));
-        #     if (R_j_e(2, 2) < 0) joint_angles(i) = -joint_angles(i);
-        #     if (R_j_e(0, 2) < 0) joint_angles(i) = -joint_angles(i);
-        #     joint_angles(i) += joint_angles(i - 1);
-        # }
-
-        return joint_angles
 
 
 def main(args=None):
 
     rclpy.init(args=args)
 
-    minimal_publisher = PickAndPlaceNode()
+    node = PickAndPlaceNode()
 
-    rclpy.spin(minimal_publisher)
-
-    # Destroy the node explicitly
-    # (optional - otherwise it will be done automatically
-    # when the garbage collector destroys the node object)
-    minimal_publisher.destroy_node()
+    rclpy.spin(node)
+    node.destroy_node()
     rclpy.shutdown()
 
 

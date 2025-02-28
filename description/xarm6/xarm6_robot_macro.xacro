@@ -7,11 +7,11 @@
     velocity_control:=false
     add_gripper:=false
     add_bio_gripper:=false
-    ros2_control_plugin:='uf_robot_hardware/UFRobotSystemHardware' 
+    ros2_control_plugin:='uf_robot_hardware/UFRobotSystemHardware'
     robot_ip:=''
     report_type:='normal'
     baud_checkset:='true'
-    default_gripper_baud:=2000000 
+    default_gripper_baud:=2000000
     model_num:=0
     inertial_params_filename:=''
     kinematics_params_filename:=''
@@ -68,7 +68,7 @@
     </xacro:unless>
 
     <xacro:xarm6_transmission prefix="${prefix}" hard_interface="${hard_interface}" />
-    
+
     <xacro:xarm6_gazebo prefix="${prefix}" />
 
   </xacro:macro>

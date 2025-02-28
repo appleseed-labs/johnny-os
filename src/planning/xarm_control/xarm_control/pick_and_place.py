@@ -80,8 +80,6 @@ def getStraightLineTrajectoryInJointSpace(
     qs = []
     ts = []
 
-    print(n_steps)
-
     for i in range(1, n_steps + 1):
         qs.append(q_start + i * dq_t)
         ts.append(i * dt)
@@ -115,15 +113,12 @@ def getStraightLineTrajectoryInTaskSpace(
     qs = []
     ts = []
 
-    print(n_steps)
-
     # fig, (ax) = plt.subplots(1, 1)
 
     initial_guess = q_start
 
     for i in range(1, n_steps + 1):
         pos_i = pos_start + d_pos_t * i
-        print(pos_i)
         # ax.scatter(pos_i[1], pos_i[2])
 
         ik = chain.inverse_kinematics(pos_i, initial_position=initial_guess)
@@ -149,17 +144,12 @@ def plotTrajectory(traj: JointTrajectory):
 
     for joint in traj.Q[:].T:
         # "joint" is the vector of joint angles for a single joint across all timesteps
-        print(joint)
         ax.plot(traj.T, joint)
-
-    print(traj.T)
 
     plt.show()
 
 
 def getSecs(rostime):
-    print(type(rostime))
-    print(rostime)
     if isinstance(rostime, RclpyTime):
         return rostime.nanoseconds / 1e9
     elif isinstance(rostime, BuiltinTime):
@@ -179,7 +169,7 @@ class PickAndPlaceNode(Node):
     def __init__(self):
         super().__init__("pick_and_place_node")
 
-        self.create_subscription(JointState, "/joint_states", self.jointStateCb, 10)
+        self.create_subscription(JointState, "/joint_states", self.jointStateCb, 1)
 
         self.joint_command_pub = self.create_publisher(
             JointState, "/joint_commands", 10
@@ -188,15 +178,26 @@ class PickAndPlaceNode(Node):
         self.close_gripper_pub = self.create_publisher(Bool, "/close_gripper", 1)
 
         self.chain = Chain.from_urdf_file(
-            "description/xarm6/xarm6.urdf", base_elements=["link_base"]
+            "description/xarm6/xarm6.urdf",
+            base_elements=["link_base"],
+            active_links_mask=[
+                False,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                False,
+            ],
         )
 
         self.current_joints = np.zeros(8)  # Serves as initial guess for IK optimization
 
         self.doPickAndPlace()
-        exit()
+        # exit()
 
-    def doTrajectory(self, traj: JointTrajectory):
+    def doTrajectory(self, traj: JointTrajectory, update_current_joints=False):
 
         t0 = getSecs(self.get_clock().now())
         msgs = traj.toJointStateMsgs(t0=t0)
@@ -212,11 +213,14 @@ class PickAndPlaceNode(Node):
 
             t += dt
 
-            print(f"t = {t} | q = {msg.position}")
+            # print(f"t = {t} | q = {msg.position}")
 
             sleep(dt)  # TODO: Make async
 
         self.joint_command_pub.publish(msgs[-1])
+
+        if update_current_joints:
+            self.current_joints[1:7] = traj.Q[-1]
 
     def doPickAndPlace(self):
         EUCLIDEAN_TOLERANCE = 0.03  # Allowed distance error in meters
@@ -224,7 +228,7 @@ class PickAndPlaceNode(Node):
         # target_pos = [msg.x, msg.y, vertical_offset]
 
         # Move from home position to just above seedling
-        target_pos = [0.0, 0.0, 0.8]
+        target_pos = [0.0, 0.5, 0.0]
 
         target_orientation = Rotation.from_euler(
             "xyz", [-np.pi / 2, np.pi / 2, 0.0]
@@ -240,97 +244,93 @@ class PickAndPlaceNode(Node):
         )
 
         traj = getStraightLineTrajectoryInJointSpace(
+            self.current_joints, ik, 1.5, 0.1, slice_joints=True
+        )
+
+        self.doTrajectory(traj, update_current_joints=True)
+
+        print(f"cur joints: {self.current_joints}")
+        rclpy.spin_once(self)
+        print(f"cur joints: {self.current_joints}")
+
+        sleep(0.5)
+
+        target_pos = [0.0, 0.6, 0.0]
+        target_orientation = Rotation.from_euler(
+            "xyz", [-np.pi / 2, np.pi / 2, 0.0]
+        ).as_matrix()
+
+        ik = self.chain.inverse_kinematics(
+            target_pos, initial_position=self.current_joints
+        )
+        ik = self.chain.inverse_kinematics(
+            target_pos,
+            target_orientation,
+            initial_position=ik,
+            orientation_mode="all",
+        )
+
+        traj = getStraightLineTrajectoryInJointSpace(
             self.current_joints, ik, 3.0, 0.1, slice_joints=True
         )
-        traj = getStraightLineTrajectoryInTaskSpace(
-            self.chain, self.current_joints, ik, 3.0, 0.1, slice_joints=True
-        )
-        plotTrajectory(traj)
 
-        self.doTrajectory(traj)
+        # plotTrajectory(traj)
+        self.doTrajectory(traj, update_current_joints=True)
+
+        self.closeGripper()
+
+        # Move up
+        target_pos = [0.0, 0.0, 0.6]
+
+        target_orientation = Rotation.from_euler(
+            "xyz", [np.pi / 2, np.pi / 2, 0.0]
+        ).as_matrix()
+        ik = self.chain.inverse_kinematics(
+            target_pos, initial_position=self.current_joints
+        )
+        ik = self.chain.inverse_kinematics(
+            target_pos,
+            target_orientation,
+            initial_position=ik,
+            orientation_mode="all",
+        )
+
+        traj = getStraightLineTrajectoryInJointSpace(
+            self.current_joints, ik, 1.5, 0.1, slice_joints=True
+        )
+
+        self.doTrajectory(traj, update_current_joints=True)
+
+        # Move seedling to other side of robot
+        target_pos = [0.0, -0.6, 0.0]
+
+        target_orientation = Rotation.from_euler(
+            "xyz", [np.pi / 2, np.pi / 2, 0.0]
+        ).as_matrix()
+        ik = self.chain.inverse_kinematics(
+            target_pos, initial_position=self.current_joints
+        )
+        ik = self.chain.inverse_kinematics(
+            target_pos,
+            target_orientation,
+            initial_position=ik,
+            orientation_mode="all",
+        )
+
+        traj = getStraightLineTrajectoryInJointSpace(
+            self.current_joints, ik, 1.5, 0.1, slice_joints=True
+        )
+
+        self.doTrajectory(traj, update_current_joints=True)
+
+        self.openGripper()
 
         exit()
 
-        for z in np.arange(0.0, 0.45, 0.05):
-            target_pos = [0.0, 0.63, 0.5 - z]
-
-            # Assume we want EEF pointed straight down
-            target_orientation = Rotation.from_euler(
-                "xyz", [-np.pi / 2, np.pi / 2, 0.0]
-            ).as_matrix()
-
-            ik = self.chain.inverse_kinematics(
-                target_pos, initial_position=self.current_joints
-            )
-            ik = self.chain.inverse_kinematics(
-                target_pos,
-                target_orientation,
-                initial_position=ik,
-                orientation_mode="all",
-            )
-
-            self.current_joints = ik
-
-            print(type(self.current_joints))
-            print(f"RESULT: {ik}")
-
-            # print(f"Target: {[msg.x, msg.y, msg.z]}")
-            reached_pos = self.chain.forward_kinematics(ik)[:3, 3]
-            # print(f"Result: {reached_pos}")
-
-            euclidean_error = np.linalg.norm(target_pos - reached_pos)
-            # print(f"Error: {euclidean_error}")
-
-            if euclidean_error > EUCLIDEAN_TOLERANCE:
-                self.get_logger().warning(f"Euclidean error {euclidean_error} > 1 cm")
-            else:
-                self.joint_command_pub.publish(self.toJointCommandMsg(ik[1:7]))
-
-            sleep(0.1)
-
-        print("DONE")
-
+    def closeGripper(self):
         self.close_gripper_pub.publish(Bool(data=True))
 
-        self.pointToSky()
-        sleep(1.0)
-
-        for z in np.arange(0.0, 0.45, 0.05):
-            target_pos = [0.0, -0.63, 0.5 - z]
-
-            # Assume we want EEF pointed straight down
-            target_orientation = Rotation.from_euler(
-                "xyz", [np.pi / 2, np.pi / 2, 0.0]
-            ).as_matrix()
-
-            ik = self.chain.inverse_kinematics(
-                target_pos, initial_position=self.current_joints
-            )
-
-            if z > 0.25:
-                ik = self.chain.inverse_kinematics(
-                    target_pos,
-                    target_orientation,
-                    initial_position=ik,
-                    orientation_mode="all",
-                )
-
-            self.current_joints = ik
-
-            print(type(self.current_joints))
-            print(f"RESULT: {ik}")
-
-            # print(f"Target: {[msg.x, msg.y, msg.z]}")
-            reached_pos = self.chain.forward_kinematics(ik)[:3, 3]
-            # print(f"Result: {reached_pos}")
-
-            euclidean_error = np.linalg.norm(target_pos - reached_pos)
-            # print(f"Error: {euclidean_error}")
-
-            self.joint_command_pub.publish(self.toJointCommandMsg(ik[1:7]))
-
-            sleep(0.1)
-
+    def openGripper(self):
         self.close_gripper_pub.publish(Bool(data=False))
 
     def pointToSky(self):
@@ -361,7 +361,10 @@ class PickAndPlaceNode(Node):
         Args:
             msg (JointState): Current joint positions
         """
-        pass
+        new_joints = msg.position[:8]  # Don't consider gripper joints
+        assert len(self.current_joints) == len(new_joints)
+        # print(msg.name)
+        # self.current_joints[1:8] = np.asarray(new_joints)[:7]
 
 
 def main(args=None):

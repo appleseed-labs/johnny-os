@@ -27,42 +27,29 @@ def generate_launch_description():
         ],
     )
 
-    joint_state_broadcaster = Node(
-        package="controller_manager",
-        executable="spawner",
-        output="screen",
-        arguments=[
-            "joint_state_broadcaster",
-            "--controller-manager",
-            "{}/controller_manager".format(""),
-        ],
+    # Connects ROS to EcoSim
+    unity_endpoint = Node(
+        package="ros_tcp_endpoint", executable="default_server_endpoint"
     )
 
-    add_gripper = True
-
-    controllers = ["xarm6_traj_controller"]
-    if add_gripper:
-        controllers.append("xarm_gripper_traj_controller")
-
-    # Load controllers
-    controller_nodes = []
-    for controller in controllers:
-        controller_nodes.append(
-            Node(
-                package="controller_manager",
-                executable="spawner",
-                output="screen",
-                arguments=[controller, "--controller-manager", "/controller_manager"],
-            )
-        )
+    rviz2 = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        arguments=["-d", "param/ecosim_base.rviz"],
+    )
 
     return LaunchDescription(
         [
-            # joint_state_broadcaster,
-            # robot_moveit_common_launch,
+            # INFRASTRUCTURE
             robot_state_publisher_node,
-            # ros2_control_node,
+            # INTERFACES
             unity_endpoint,
+            # PERCEPTION
+            # PLANNING
+            # VISUALIZATION
+            rviz2,
         ]
         # + controller_nodes
     )

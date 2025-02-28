@@ -24,6 +24,19 @@ $ colcon build  # Build with colcon
 $ . install/setup.bash  # Source your workspace
 ```
 
+## Running an example with EcoSim
+First, ensure that EcoSim is running. See the [docs](https://wheitman.github.io/ecosim/) for instructions.
+
+Now run the example launch file:
+
+```bash
+$ cd johnny-os
+$ . install/setup.bash
+$ ros2 launch launch/ecosim_base.launch.py
+```
+
+An Rviz2 window should open, showing sensor data.
+
 ## Folder structure
 
 ```

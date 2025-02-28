@@ -10,6 +10,3 @@
 	path = src/external/pymoveit2
 	url = https://github.com/AndrejOrsula/pymoveit2
 	branch = master
-[submodule "src/external/amiga_cmu_description"]
-	path = src/external/amiga_cmu_description
-	url = https://github.com/Kantor-Lab/amiga_cmu_description

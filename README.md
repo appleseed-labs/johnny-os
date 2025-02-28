@@ -7,10 +7,17 @@ This project contains submodules. You *must* clone this repo recursively:
 
 ```
 $ git clone https://github.com/appleseed-labs/johnny-os.git --recursive
+$ cd johnny-os
 
 # Now update the submodules
-$ git submodule sync
+$ git submodule sync 
 $ git submodule update --init --remote --recursive
+
+# Install any dependencies with rosdep
+$ rosdep update && rosdep install --from-paths src --ignore-src -r
+
+$ colcon build  # Build with colcon
+$ . install/setup.bash  # Source your workspace
 ```
 
 ## Folder structure

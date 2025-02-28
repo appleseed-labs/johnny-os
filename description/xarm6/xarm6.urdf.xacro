@@ -34,7 +34,7 @@
         <xacro:property name="link6_collision" value="end_tool/collision/end_tool"/>
       </xacro:unless>
     </xacro:unless>
-    
+
     <!-- load params and define property -->
     <xacro:property name="default_inertial_params_filename" value="xarm6_type6_HT_BR2"/>
     <xacro:if value="${inertial_params_filename != ''}">
@@ -61,33 +61,33 @@
           ixx="0.00494875" ixy="-3.5E-06" ixz="1.25E-05"
           iyy="0.00494174" iyz="1.67E-06" izz="0.002219" />
       </inertial>
-      <xacro:common_link_visual 
-        mesh_filename="${visual_dir}/link_base"  
-        origin_xyz="0 0 0" 
+      <xacro:common_link_visual
+        mesh_filename="${visual_dir}/link_base"
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0"
         material_name="${prefix}White" />
-      <xacro:common_link_collision 
-        mesh_filename="${collision_dir}/link_base" 
-        add_mesh_suffix="${add_mesh_suffix}" 
-        other_mesh_suffix="${collison_mesh_suffix}" 
-        origin_xyz="0 0 0" 
+      <xacro:common_link_collision
+        mesh_filename="${collision_dir}/link_base"
+        add_mesh_suffix="${add_mesh_suffix}"
+        other_mesh_suffix="${collison_mesh_suffix}"
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0" />
     </link>
 
     <link name="${prefix}link1">
-      <xacro:common_link_inertial 
-        link_inertial_params="${inertial_params['link1']}" 
+      <xacro:common_link_inertial
+        link_inertial_params="${inertial_params['link1']}"
         origin_rpy="0 0 0"/>
-      <xacro:common_link_visual 
-        mesh_filename="${visual_dir}/link1"  
-        origin_xyz="0 0 0" 
+      <xacro:common_link_visual
+        mesh_filename="${visual_dir}/link1"
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0"
         material_name="${prefix}White" />
-      <xacro:common_link_collision 
-        mesh_filename="${collision_dir}/link1"  
-        add_mesh_suffix="${add_mesh_suffix}" 
+      <xacro:common_link_collision
+        mesh_filename="${collision_dir}/link1"
+        add_mesh_suffix="${add_mesh_suffix}"
         other_mesh_suffix="${collison_mesh_suffix}"
-        origin_xyz="0 0 0" 
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0" />
     </link>
 
@@ -106,19 +106,19 @@
     </joint>
 
     <link name="${prefix}link2">
-      <xacro:common_link_inertial 
-        link_inertial_params="${inertial_params['link2']}" 
+      <xacro:common_link_inertial
+        link_inertial_params="${inertial_params['link2']}"
         origin_rpy="0 0 0"/>
-      <xacro:common_link_visual 
-        mesh_filename="${visual_dir}/link2"  
-        origin_xyz="0 0 0" 
+      <xacro:common_link_visual
+        mesh_filename="${visual_dir}/link2"
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0"
         material_name="${prefix}White" />
-      <xacro:common_link_collision 
-        mesh_filename="${collision_dir}/link2"  
-        add_mesh_suffix="${add_mesh_suffix}" 
+      <xacro:common_link_collision
+        mesh_filename="${collision_dir}/link2"
+        add_mesh_suffix="${add_mesh_suffix}"
         other_mesh_suffix="${collison_mesh_suffix}"
-        origin_xyz="0 0 0" 
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0" />
     </link>
 
@@ -137,19 +137,19 @@
     </joint>
 
     <link name="${prefix}link3">
-      <xacro:common_link_inertial 
-        link_inertial_params="${inertial_params['link3']}" 
+      <xacro:common_link_inertial
+        link_inertial_params="${inertial_params['link3']}"
         origin_rpy="0 0 0"/>
-      <xacro:common_link_visual 
-        mesh_filename="${visual_dir}/link3"  
-        origin_xyz="0 0 0" 
+      <xacro:common_link_visual
+        mesh_filename="${visual_dir}/link3"
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0"
         material_name="${prefix}White" />
-      <xacro:common_link_collision 
-        mesh_filename="${collision_dir}/link3"  
-        add_mesh_suffix="${add_mesh_suffix}" 
+      <xacro:common_link_collision
+        mesh_filename="${collision_dir}/link3"
+        add_mesh_suffix="${add_mesh_suffix}"
         other_mesh_suffix="${collison_mesh_suffix}"
-        origin_xyz="0 0 0" 
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0" />
     </link>
 
@@ -168,19 +168,19 @@
     </joint>
 
     <link name="${prefix}link4">
-      <xacro:common_link_inertial 
-        link_inertial_params="${inertial_params['link4']}" 
+      <xacro:common_link_inertial
+        link_inertial_params="${inertial_params['link4']}"
         origin_rpy="0 0 0"/>
-      <xacro:common_link_visual 
-        mesh_filename="${visual_dir}/link4"  
-        origin_xyz="0 0 0" 
+      <xacro:common_link_visual
+        mesh_filename="${visual_dir}/link4"
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0"
         material_name="${prefix}White" />
-      <xacro:common_link_collision 
-        mesh_filename="${collision_dir}/link4"  
-        add_mesh_suffix="${add_mesh_suffix}" 
+      <xacro:common_link_collision
+        mesh_filename="${collision_dir}/link4"
+        add_mesh_suffix="${add_mesh_suffix}"
         other_mesh_suffix="${collison_mesh_suffix}"
-        origin_xyz="0 0 0" 
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0" />
     </link>
 
@@ -199,19 +199,19 @@
     </joint>
 
     <link name="${prefix}link5">
-      <xacro:common_link_inertial 
-        link_inertial_params="${inertial_params['link5']}" 
+      <xacro:common_link_inertial
+        link_inertial_params="${inertial_params['link5']}"
         origin_rpy="0 0 0"/>
-      <xacro:common_link_visual 
-        mesh_filename="${visual_dir}/link5"  
-        origin_xyz="0 0 0" 
+      <xacro:common_link_visual
+        mesh_filename="${visual_dir}/link5"
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0"
         material_name="${prefix}White" />
-      <xacro:common_link_collision 
-        mesh_filename="${collision_dir}/link5"  
-        add_mesh_suffix="${add_mesh_suffix}" 
+      <xacro:common_link_collision
+        mesh_filename="${collision_dir}/link5"
+        add_mesh_suffix="${add_mesh_suffix}"
         other_mesh_suffix="${collison_mesh_suffix}"
-        origin_xyz="0 0 0" 
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0" />
     </link>
 
@@ -229,19 +229,19 @@
     </joint>
 
     <link name="${prefix}link6">
-      <xacro:common_link_inertial 
-        link_inertial_params="${inertial_params['link6']}" 
+      <xacro:common_link_inertial
+        link_inertial_params="${inertial_params['link6']}"
         origin_rpy="0 0 0"/>
-      <xacro:common_link_visual 
-        mesh_filename="${link6_visual}"  
-        origin_xyz="0 0 0" 
+      <xacro:common_link_visual
+        mesh_filename="${link6_visual}"
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0"
         material_name="${prefix}Silver" />
-      <xacro:common_link_collision 
-        mesh_filename="${link6_collision}"  
-        add_mesh_suffix="${add_mesh_suffix}" 
+      <xacro:common_link_collision
+        mesh_filename="${link6_collision}"
+        add_mesh_suffix="${add_mesh_suffix}"
         other_mesh_suffix="${collison_mesh_suffix}"
-        origin_xyz="0 0 0" 
+        origin_xyz="0 0 0"
         origin_rpy="0 0 0" />
     </link>
 
@@ -265,6 +265,6 @@
       <parent link="${prefix}link6" />
       <child link="${prefix}link_eef" />
     </joint> -->
-  
+
   </xacro:macro>
 </robot>

@@ -10,8 +10,12 @@ $ git clone https://github.com/appleseed-labs/johnny-os.git --recursive
 $ cd johnny-os
 
 # Now update the submodules
-$ git submodule sync 
+$ git submodule sync
 $ git submodule update --init --remote --recursive
+
+# Set up pre-commit (enforces formatting and more)
+$ pip install pre-commit  # If not already installed
+$ pre-commit install      # Now checks will run automatically at git commit
 
 # Install any dependencies with rosdep
 $ rosdep update && rosdep install --from-paths src --ignore-src -r

@@ -1,0 +1,14 @@
+title: Johnny
+description: Carnegie Mellon's submission to the 2025 Farm Robotics Challenge
+theme: just-the-docs
+logo: "/assets/images/logo.png"
+favicon_ico: "/assets/images/logo.png"
+color_scheme: appleseed
+
+url: https://appleseed-labs.github.io
+
+nav_external_links:
+  - title: EcoSim
+    url: https://github.com/wheitman/ecosim
+    hide_icon: false # set to true to hide the external link icon - defaults to false
+    opens_in_new_tab: true # set to true to open this link in a new tab - defaults to false

@@ -4,22 +4,25 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Float64
-
+from nav_msgs.msg import OccupancyGrid
 
 # This node should subscribe to the point cloud data from lidar,
 # detect the obstacles based on the data
 # and publish the occupancy grid for trajectory generation
 
 # TODO LIST:
-# 1. define a msg type for 1d array and width and height 
-# refer to https://robotics.stackexchange.com/questions/97420/send-a-2d-array-through-topics-in-ros2
-# 2. remove noise and detect the ground and obstacles from the point cloud
+# 1. test individual node with fake data
+# 2. test in EcoSim, adjust parameters and finding origin
+# ignore for now: remove noise
 # library that might work: https://pcl.readthedocs.io/projects/tutorials/en/latest/walkthrough.html
-# 3. process the data to form an occupancy grid
-# 4. test with data from EcoSim 
+# ignore for now: better ground detection
+
 
 class obstacleDetector(Node):
+    # publish rate
     RATE = 100
+    # grid resolution (m/cell)
+    GRID_RES = 0.5
 
     def __init__(self):
         # initialize variables
@@ -34,29 +37,75 @@ class obstacleDetector(Node):
         )
 
         # publish occupancy_grid to "traj/occupancy_grid"
-        self.occupancy_grid_publisher = self.create_publisher(Float64, "traj/occupancy_grid", 1)
+        self.occupancy_grid_publisher = self.create_publisher(OccupancyGrid, "traj/occupancy_grid", 1)
 
         # ROS2 timer for stepping
         self.timer = self.create_timer(1.0 / self.RATE, self.step)
 
-        # super().__init__('obstacle_detector')
-        # self.get_logger().info('INITIALIZED.')
+        super().__init__('obstacle_detector')
+        self.get_logger().info('INITIALIZED.')
 
     def processPointCloud(self):
-        self.np_point_cloud = rnp.numpify(self.point_cloud_subscriber)
+        # transformation parameters (need to the changed to real values)
+        theta = 1
+        x_offset = 1
+        y_offset = 1
 
-        return np.array([[0]])
+        np_point_cloud = rnp.numpify(self.point_cloud_subscriber)
+        self.map_load_time = self.get_clock().now().to_msg()
+        num_points = np_point_cloud.size
+
+        # rotation around y
+        R = np.array([
+            [np.cos(theta),  0, np.sin(theta)],
+            [0,              1, 0],
+            [-np.sin(theta), 0, np.cos(theta)]])
+        # Translation
+        T = np.array([x_offset, y_offset, 0])
+
+        # go through all point clouds
+        for i in range(num_points):
+            np_point_cloud[i] = R * np_point_cloud[i] + T
+        
+        # filter by z > 0.5
+        np_point_cloud = np_point_cloud[np_point_cloud[:, 2] > 0.5]
+
+        return np_point_cloud
+
+    def createOccupancy_grid(self, processed_pc):
+        max_x = max(processed_pc[:,0])
+        min_x = min(processed_pc[:,0])
+        max_y = max(processed_pc[:,1])
+        min_y = min(processed_pc[:,1])
+        origin_x = -min_x
+        origin_y = -min_y
+
+        width = int(max_x + 1 - min_x)
+        height = int(max_y + 1 - min_y)
+
+        grid = np.zeros((height, width), dtype = np.int8)
+
+        for (x, y, z) in processed_pc:
+            grid_x = (x - origin_x)/self.GRID_RES
+            grid_y = (y - origin_y)/self.GRID_RES
+            grid[grid_y, grid_x] = 1
+        
+        msg = OccupancyGrid()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "robot_center_frame"
+        msg.info.map_load_time = self.map_load_time
+        msg.info.resolution = self.GRID_RES
+        msg.info.width = max_x
+        msg.info.height = max_y
+        msg.info.origin.position.x = origin_x
+        msg.info.origin.position.y = origin_y
+        msg.data = np.flatten(grid).to_list()
+        return msg
     
     def step(self):
-        # update velocity
-        occupancy_grid = self.processPointCloud()
-
-        occupancy_grid_flattened = occupancy_grid.flat()
-
-        # publish velocity
-        float_64_velocity = Float64()
-        float_64_velocity.data = float(self.buggy_vel)
-        self.velocity_publisher.publish(occupancy_grid_flattened)
+        processed_pc = self.processPointCloud()
+        occupancy_grid = self.createOccupancy_grid(processed_pc)
+        self.occupancy_grid_publisher.publish(occupancy_grid)
 
 def main(args=None):
     rclpy.init(args=args)

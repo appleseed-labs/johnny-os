@@ -5,7 +5,7 @@ logo: "/assets/images/logo.png"
 favicon_ico: "/assets/images/logo.png"
 color_scheme: appleseed
 
-url: https://appleseed-labs.github.io
+url: https://appleseed-labs.github.io/johnny-os
 
 nav_external_links:
   - title: EcoSim

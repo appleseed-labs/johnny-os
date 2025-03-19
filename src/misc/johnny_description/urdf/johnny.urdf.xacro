@@ -137,11 +137,25 @@
     </link>
 
 
+    <link name="gnss_link" />
+    <joint name="gnss_link_joint" type="fixed">
+        <origin xyz="0 0 1.76" rpy="0 0 0" />
+        <parent link="base_link" />
+        <child link="gnss_link" />
+    </joint>
+
     <link name="imu_link" />
     <joint name="imu_link_joint" type="fixed">
-        <origin xyz="0 0 0" rpy="0 0 0" />
+        <origin xyz="0 0 1.76" rpy="0 0 0" />
         <parent link="base_link" />
         <child link="imu_link" />
+    </joint>
+
+    <link name="lidar_link" />
+    <joint name="lidar_link_joint" type="fixed">
+        <origin xyz="0.37 0 1.31" rpy="0 ${PI/6} 0" />
+        <parent link="base_link" />
+        <child link="lidar_link" />
     </joint>
 
 </robot>

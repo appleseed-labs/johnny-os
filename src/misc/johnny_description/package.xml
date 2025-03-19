@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+    <name>johnny_description</name>
+    <version>1.0.8</version>
+    <description>Description for Johnny B. Root</description>
+
+    <maintainer email="will@heit.mn">Will Heitman</maintainer>
+
+    <license>BSD</license>
+
+    <buildtool_depend>ament_cmake</buildtool_depend>
+
+    <depend>urdf</depend>
+    <depend>xacro</depend>
+
+    <export>
+        <build_type>ament_cmake</build_type>
+    </export>
+</package>

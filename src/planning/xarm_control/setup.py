@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             "pick_and_place_node = xarm_control.pick_and_place:main",
+            "xarm_control_node = xarm_control.xarm_control:main",
         ],
     },
 )

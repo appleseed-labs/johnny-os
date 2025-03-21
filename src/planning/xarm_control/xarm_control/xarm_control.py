@@ -34,9 +34,9 @@ from std_msgs.msg import Bool
 
 from xarm.wrapper import XArmAPI
 
-from ikpy.chain import Chain
-from ikpy.link import Link
-from ikpy.utils import plot
+# from ikpy.chain import Chain
+# from ikpy.link import Link
+# from ikpy.utils import plot
 
 from enum import Enum
 
@@ -233,6 +233,9 @@ class XarmControlNode(Node):
         self.goHome(speed=speed)
         self.goOverhead(speed=speed)
         self.goReady()
+
+    def setJointPosition(self, q: list[float], speed=25) -> int:
+        self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
 
     def goHome(self, speed=25):
         if self.fsm_state == PoseState.READY:

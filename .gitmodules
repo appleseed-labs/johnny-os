@@ -1,7 +1,3 @@
-[submodule "src/external/xarm_ros2"]
-	path = src/external/xarm_ros2
-	url = https://github.com/xArm-Developer/xarm_ros2
-	branch = humble
 [submodule "src/external/ros_tcp_endpoint"]
 	path = src/external/ros_tcp_endpoint
 	url = https://github.com/Unity-Technologies/ROS-TCP-Endpoint

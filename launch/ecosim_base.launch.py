@@ -40,6 +40,16 @@ def generate_launch_description():
         arguments=["-d", "param/ecosim_base.rviz"],
     )
 
+    motion_controller = Node(
+        package="ros_motion_controller",
+        executable="motion_controller",
+    )
+
+    waypoint_publisher = Node(
+        package="ros_waypoint",
+        executable="waypoint_node",
+    )
+
     return LaunchDescription(
         [
             # INFRASTRUCTURE
@@ -48,8 +58,10 @@ def generate_launch_description():
             unity_endpoint,
             # PERCEPTION
             # PLANNING
+            motion_controller,
+            waypoint_publisher,
             # VISUALIZATION
-            rviz2,
+            # rviz2,
         ]
         # + controller_nodes
     )

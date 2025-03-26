@@ -30,7 +30,7 @@ import numpy as np
 
 from geometry_msgs.msg import Point
 from time import sleep
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Empty
 
 from xarm.wrapper import XArmAPI
 
@@ -120,50 +120,50 @@ def getStraightLineTrajectoryInJointSpace(
         return JointTrajectory(np.asarray(qs), np.asarray(ts))
 
 
-def getStraightLineTrajectoryInTaskSpace(
-    chain: Chain,
-    q_start: np.ndarray,
-    q_end: np.ndarray,
-    duration,
-    dt,
-    slice_joints=False,
-) -> JointTrajectory:
-    assert len(q_start) == len(q_end)
+# def getStraightLineTrajectoryInTaskSpace(
+#     chain: Chain,
+#     q_start: np.ndarray,
+#     q_end: np.ndarray,
+#     duration,
+#     dt,
+#     slice_joints=False,
+# ) -> JointTrajectory:
+#     assert len(q_start) == len(q_end)
 
-    pos_start = chain.forward_kinematics(q_start)[:3, 3]
-    pos_end = chain.forward_kinematics(q_end)[:3, 3]
+#     pos_start = chain.forward_kinematics(q_start)[:3, 3]
+#     pos_end = chain.forward_kinematics(q_end)[:3, 3]
 
-    d_pos = pos_end - pos_start
+#     d_pos = pos_end - pos_start
 
-    n_steps = int(duration / dt)
-    d_pos_t = (
-        d_pos / n_steps
-    )  # The change in end effector position to make at each step
+#     n_steps = int(duration / dt)
+#     d_pos_t = (
+#         d_pos / n_steps
+#     )  # The change in end effector position to make at each step
 
-    qs = []
-    ts = []
+#     qs = []
+#     ts = []
 
-    # fig, (ax) = plt.subplots(1, 1)
+#     # fig, (ax) = plt.subplots(1, 1)
 
-    initial_guess = q_start
+#     initial_guess = q_start
 
-    for i in range(1, n_steps + 1):
-        pos_i = pos_start + d_pos_t * i
-        # ax.scatter(pos_i[1], pos_i[2])
+#     for i in range(1, n_steps + 1):
+#         pos_i = pos_start + d_pos_t * i
+#         # ax.scatter(pos_i[1], pos_i[2])
 
-        ik = chain.inverse_kinematics(pos_i, initial_position=initial_guess)
+#         ik = chain.inverse_kinematics(pos_i, initial_position=initial_guess)
 
-        initial_guess = ik
+#         initial_guess = ik
 
-        qs.append(ik)
-        ts.append(i * dt)
+#         qs.append(ik)
+#         ts.append(i * dt)
 
-    # plt.show()
+#     # plt.show()
 
-    if slice_joints:
-        return JointTrajectory(np.asarray(qs)[:, 1:7], np.asarray(ts))
-    else:
-        return JointTrajectory(np.asarray(qs), np.asarray(ts))
+#     if slice_joints:
+#         return JointTrajectory(np.asarray(qs)[:, 1:7], np.asarray(ts))
+#     else:
+#         return JointTrajectory(np.asarray(qs), np.asarray(ts))
 
 
 class XarmControlNode(Node):
@@ -175,23 +175,58 @@ class XarmControlNode(Node):
             "192.168.1.196",
             ParameterDescriptor(description="IP address of the xArm"),
         )
-
         ip = self.get_parameter("xarm_ip").get_parameter_value().string_value
 
-        self.chain = Chain.from_urdf_file(
-            "description/xarm6/xarm6.urdf",
-            base_elements=["link_base"],
-            active_links_mask=[
-                False,
-                True,
-                True,
-                True,
-                True,
-                True,
-                True,
-                False,
-            ],
+        self.declare_parameter(
+            "sim_only",
+            True,
+            ParameterDescriptor(
+                description="Skip xArm connection, only send EcoSim signals"
+            ),
         )
+        self.sim_only = self.get_parameter("sim_only").get_parameter_value().bool_value
+
+        self.declare_parameter(
+            "planting_time_secs",
+            3.0,
+            ParameterDescriptor(
+                description="Total time it takes for the arm to plant a seedling, in seconds."
+            ),
+        )
+        self.planting_time_secs = (
+            self.get_parameter("planting_time_secs").get_parameter_value().double_value
+        )
+
+        self.create_subscription(
+            Empty, "/behavior/start_planting", self.startPlantingCb, 1
+        )
+
+        self.start_driving_pub = self.create_publisher(
+            Empty, "/behavior/start_driving", 1
+        )
+
+        # self.chain = Chain.from_urdf_file(
+        #     "description/xarm6/xarm6.urdf",
+        #     base_elements=["link_base"],
+        #     active_links_mask=[
+        #         False,
+        #         True,
+        #         True,
+        #         True,
+        #         True,
+        #         True,
+        #         True,
+        #         False,
+        #     ],
+        # )
+
+        self.is_planting = False
+        self.planting_stop_time = time.time()
+        self.create_timer(0.1, self.checkIfPlantingComplete)
+
+        if self.sim_only:
+            self.get_logger().info("Sim only mode enabled. Skipping xArm setup.")
+            return
 
         self.arm = XArmAPI(ip)
 
@@ -234,10 +269,31 @@ class XarmControlNode(Node):
         self.goOverhead(speed=speed)
         self.goReady()
 
+    def checkIfPlantingComplete(self):
+        if self.is_planting and time.time() > self.planting_stop_time:
+            self.get_logger().info("Planting complete")
+            self.is_planting = False
+            self.start_driving_pub.publish(Empty())
+
+        elif self.is_planting:
+            remaining_time = self.planting_stop_time - time.time()
+            self.get_logger().info(
+                f"Planting in progress. {remaining_time:.2f} seconds remaining"
+            )
+
+    def startPlantingCb(self, msg):
+        self.get_logger().info("Received start planting signal")
+        self.is_planting = True
+        self.planting_stop_time = time.time() + self.planting_time_secs
+        self.goHome()
+
     def setJointPosition(self, q: list[float], speed=25) -> int:
         self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
 
     def goHome(self, speed=25):
+        if self.sim_only:
+            return
+
         if self.fsm_state == PoseState.READY:
             self.get_logger().info("Going to overhead from ready")
             self.goOverhead(speed=speed)
@@ -258,11 +314,16 @@ class XarmControlNode(Node):
             )
 
     def goOverhead(self, speed=25):
+        if self.sim_only:
+            return
+
         self.arm.set_servo_angle(angle=OVERHEAD_Q, speed=speed, wait=True)
         self.get_logger().info("Now at overhead position")
         self.fsm_state = PoseState.OVERHEAD
 
     def goReady(self, speed=25):
+        if self.sim_only:
+            return
         self.arm.set_servo_angle(angle=READY_Q, speed=speed, wait=True)
         self.get_logger().info("Now at ready position")
         self.fsm_state = PoseState.READY
@@ -295,7 +356,8 @@ def main(args=None):
 
     node = XarmControlNode()
 
-    arm = node.arm
+    if not node.sim_only:
+        arm = node.arm
 
     try:
         rclpy.spin(node)
@@ -305,9 +367,10 @@ def main(args=None):
 
         # Clean up the xArm connection
         node.get_logger().warning("Disconnecting from xArm...")
-        arm.set_state(state=4)
-        # arm.motion_enable(enable=False)
-        arm.disconnect()
+        if not node.sim_only:
+            arm.set_state(state=4)
+            # arm.motion_enable(enable=False)
+            arm.disconnect()
 
         # Shutdown rclpy
         rclpy.shutdown()

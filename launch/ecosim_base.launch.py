@@ -56,6 +56,8 @@ def generate_launch_description():
         package="rosbridge_server", executable="rosbridge_websocket"
     )
 
+    xarm_controller = Node(package="xarm_control", executable="xarm_control")
+
     return LaunchDescription(
         [
             # INFRASTRUCTURE
@@ -66,7 +68,7 @@ def generate_launch_description():
             # PERCEPTION
             # PLANNING
             # motion_controller,
-            trajectory_planner,
+            # trajectory_planner,
             waypoint_publisher,
             # VISUALIZATION
             # rviz2,

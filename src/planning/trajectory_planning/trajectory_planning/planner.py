@@ -30,16 +30,16 @@ from geographic_msgs.msg import GeoPoint
 from geometry_msgs.msg import Pose, Point, Twist, PoseStamped, PointStamped
 from nav_msgs.msg import OccupancyGrid, MapMetaData, Path
 
-# from johnny_msgs.msg import (
-#     FailedChecks,
-#     HealthCheck,
-#     SystemwideStatus,
-#     TrajectoryCandidates,
-#     TrajectoryCandidate,
-#     Mode,
-#     PlantingPlan,
-#     Seedling,
-# )
+from johnny_msgs.msg import (
+    FailedChecks,
+    HealthCheck,
+    SystemwideStatus,
+    TrajectoryCandidates,
+    TrajectoryCandidate,
+    Mode,
+    PlantingPlan,
+    Seedling,
+)
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header, String, Float32, Bool, Empty
 
@@ -60,7 +60,8 @@ class PlannerNode(Node):
 
         self.setUpParameters()
 
-        self.TARGET_DOWNHILL_YAW = np.pi  # radians from east
+        lat0, lon0, alt0 = self.get_parameter("map_origin_lat_lon_alt_degrees").value
+        self.origin_utm_x, self.origin_utm_y, _, __ = utm.from_latlon(lat0, lon0)
 
         self.create_subscription(String, "planning/plan_json", self.planCb, 1)
         self.create_subscription(Twist, "/cmd_vel/teleop", self.teleopTwistCb, 1)
@@ -69,18 +70,17 @@ class PlannerNode(Node):
             GeoPoint, "/planning/goal_pose_geo", self.goalPointGeoCb, 1
         )
         self.create_subscription(Float32, "/gnss/yaw", self.egoYawCb, 1)
-        # self.create_subscription(Mode, "/planning/current_mode", self.currentModeCb, 1)
+        self.create_subscription(Mode, "/planning/current_mode", self.currentModeCb, 1)
         self.create_subscription(Bool, "/behavior/is_planting", self.isPlantingCb, 1)
         self.create_subscription(
             Bool, "/behavior/is_turning_downhill", self.isTurningDownhillCb, 1
-        )
-        self.create_subscription(
-            PointStamped, "/planning/closest_seedling_bl", self.closestPointBlCb, 1
         )
 
         self.create_subscription(
             PlantingPlan, "/planning/remaining_plan", self.planCb, 1
         )
+
+        self.create_subscription(String, "/waypoints_string", self.waypointsStringCb, 1)
 
         self.twist_pub = self.create_publisher(Twist, "/cmd_vel", 1)
         self.facing_downhill_pub = self.create_publisher(
@@ -117,8 +117,20 @@ class PlannerNode(Node):
         self.create_timer(0.1, self.updateTrajectorySimply)
         # self.create_timer(0.1, self.updateTrajectory)
 
-    def closestPointBlCb(self, msg: PointStamped):
-        self.closest_point_bl = [msg.point.x, msg.point.y]
+    def waypointsStringCb(self, msg: String):
+        seedling_points_latlon = json.loads(msg.data)
+
+        self.seedling_points = []
+
+        # Convert each from latlon to meters
+        for seedling_point_latlon in seedling_points_latlon:
+            lat, lon = seedling_point_latlon
+            x, y = self.latLonToMap(lat, lon)
+            self.seedling_points.append([x, y])
+
+        self.get_logger().info(f"Got {self.seedling_points} seedling points")
+
+        self.current_mode = Mode.AUTO
 
     def isPlantingCb(self, msg: Bool):
         self.is_planting = msg.data
@@ -460,34 +472,36 @@ class PlannerNode(Node):
         return pts_tfed
 
     def getClosestSeedlingInBaselink(self):
-        # if self.seedling_points is None or len(self.seedling_points) < 1:
-        #     self.get_logger().warning(
-        #         f"Could not find closest seedling point. Seedling points unknown."
-        #     )
-        #     return None
-
-        # closest_distance = 999999.9
-        # for seedling_pt in self.seedling_points:
-        #     seedling_x, seedling_y = seedling_pt
-
-        #     dist = pdist([self.ego_pos, [seedling_x, seedling_y]])[0]
-
-        #     if dist < closest_distance:
-        #         closest_distance = dist
-        #         closest_seedling = seedling_pt
-
-        # closest_seedling_bl = self.transformToBaselink([closest_seedling])
-        # print(self.ego_yaw, closest_seedling_bl)
-
-        if self.total_cost_map is None:
+        if self.seedling_points is None or len(self.seedling_points) < 1:
             self.get_logger().warning(
                 f"Could not find closest seedling point. Seedling points unknown."
             )
             return None
 
-        x = self.total_cost_map
-        pixel_coords = np.unravel_index(x.argmin(), x.shape)
-        return [pixel_coords[1] - 40, pixel_coords[0] - 50]
+        closest_distance = 999999.9
+        for seedling_pt in self.seedling_points:
+            seedling_x, seedling_y = seedling_pt
+
+            dist = pdist([self.ego_pos, [seedling_x, seedling_y]])[0]
+
+            if dist < closest_distance:
+                closest_distance = dist
+                closest_seedling = seedling_pt
+
+        closest_seedling_bl = self.transformToBaselink([closest_seedling])
+        print(self.ego_yaw, closest_seedling_bl)
+
+        return closest_seedling_bl
+
+        # if self.total_cost_map is None:
+        #     self.get_logger().warning(
+        #         f"Could not find closest seedling point. Seedling points unknown."
+        #     )
+        #     return None
+
+        # x = self.total_cost_map
+        # pixel_coords = np.unravel_index(x.argmin(), x.shape)
+        # return [pixel_coords[1] - 40, pixel_coords[0] - 50]
 
     def planCb(self, msg: PlantingPlan):
         print(f"Got plan with {len(msg.seedlings)} seedlings")
@@ -563,22 +577,11 @@ class PlannerNode(Node):
         # else:
         #     self.get_logger().warning("No candidates message available.")
 
+        goal_point = self.getClosestSeedlingInBaselink()
+
         if self.current_mode == Mode.STOPPED:
             self.publishStatus("Paused")
             self.twist_pub.publish(self.getSmoothed(Twist()))
-            return
-
-        if self.is_turning_downhill:
-            self.publishStatus("Turning downhill before planting")
-            yaw_error = self.TARGET_DOWNHILL_YAW - self.ego_yaw
-            self.get_logger().info(f"{yaw_error}")
-
-            if abs(yaw_error) < 0.2:
-
-                self.facing_downhill_pub.publish(Empty())
-                return
-
-            self.pointTurnFromYawError(yaw_error, omega=1.2, linear=0.8)
             return
 
         if self.is_planting:
@@ -586,23 +589,8 @@ class PlannerNode(Node):
             self.twist_pub.publish(self.getSmoothed(Twist()))
             return
 
-        if self.current_mode == Mode.TELEOP:
-            self.twist_pub.publish(self.getSmoothed(self.cached_teleop))
-            self.publishStatus("Following teleop commands")
-            return
-
-        elif self.current_mode == Mode.ASSISTED:
-            self.get_logger().error("Assisted teleop is not yet supported!")
-            return
-
-        if self.closest_point_bl is None:
+        if goal_point is None:
             self.get_logger().error("Seedling waypoint unknown. Stopping.")
-            self.twist_pub.publish(self.getSmoothed(Twist()))
-            return
-
-        if self.remaining_seedling_count < 1:
-            # self.get_logger().error("Seedling waypoint unknown. Stopping.")
-            self.publishStatus("Plan complete.")
             self.twist_pub.publish(self.getSmoothed(Twist()))
             return
 
@@ -833,7 +821,7 @@ class PlannerNode(Node):
         param_desc.type = ParameterType.PARAMETER_DOUBLE_ARRAY
         self.declare_parameter(
             "map_origin_lat_lon_alt_degrees",
-            [40.4431653, -79.9402844, 288.0961589],
+            [40.443166012335624, -79.9402856954985594, 288.0961589],
         )
 
 

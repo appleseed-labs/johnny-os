@@ -50,15 +50,23 @@ def generate_launch_description():
         executable="waypoint_node",
     )
 
+    trajectory_planner = Node(package="trajectory_planning", executable="planner")
+
+    rosbridge_server = Node(
+        package="rosbridge_server", executable="rosbridge_websocket"
+    )
+
     return LaunchDescription(
         [
             # INFRASTRUCTURE
             robot_state_publisher_node,
             # INTERFACES
+            rosbridge_server,
             unity_endpoint,
             # PERCEPTION
             # PLANNING
-            motion_controller,
+            # motion_controller,
+            trajectory_planner,
             waypoint_publisher,
             # VISUALIZATION
             # rviz2,

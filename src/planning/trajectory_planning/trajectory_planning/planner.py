@@ -5,12 +5,14 @@ from rclpy.node import Node, ParameterDescriptor, ParameterType
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from time import time
-from tqdm import tqdm, trange
+
+# from tqdm import tqdm, trange
 from scipy.spatial.distance import pdist, squareform
 from scipy.linalg import norm
 from matplotlib import pyplot as plt
 from matplotlib import patches
-import cv2
+
+# import cv2
 from enum import IntEnum
 import json
 from tf2_ros.buffer import Buffer
@@ -21,12 +23,13 @@ import math
 from scipy.spatial.transform.rotation import Rotation as R
 from scipy import stats
 
-from skimage.draw import disk
+# from skimage.draw import disk
 
 
 # ROS2 message definitions
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
-from geographic_msgs.msg import GeoPoint
+
+# from geographic_msgs.msg import GeoPoint
 from geometry_msgs.msg import Pose, Point, Twist, PoseStamped, PointStamped
 from nav_msgs.msg import OccupancyGrid, MapMetaData, Path
 
@@ -102,8 +105,6 @@ class PlannerNode(Node):
         self.start_planting_pub = self.create_publisher(
             Empty, "/behavior/start_planting", 1
         )
-
-        self.generateCandidates()
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -187,243 +188,8 @@ class PlannerNode(Node):
         self.total_cost_map = arr
         self.grid_info = msg.info
 
-    def generateCandidates(self, top_speed=1.5, time_horizon=5.0, dt=0.5):
-
-        # Start with top speed
-        trajectories = []
-        candidates = []
-
-        v = top_speed
-        Omega = np.linspace(-0.1, 0.1, 3)
-        candidates_at_speed = []
-        mega_mask = np.zeros((100, 100))
-        for omega in Omega:
-            pose = np.zeros(4)  # Start at ego position, zero speed, zero (relative) yaw
-            trajectory = []
-
-            for t in np.arange(0, time_horizon, dt):
-                trajectory.append(pose.copy())
-                pose[0] += v * math.cos(pose[2]) * dt
-                pose[1] += v * math.sin(pose[2]) * dt
-                pose[2] += omega * dt
-                pose[3] = t + dt
-
-            for second_omega in Omega:
-                second_trajectory = trajectory.copy()
-                second_pose = pose.copy()
-
-                for t in np.arange(0, time_horizon, dt):
-                    second_trajectory.append(second_pose.copy())
-                    second_pose[0] += v * math.cos(second_pose[2]) * dt
-                    second_pose[1] += v * math.sin(second_pose[2]) * dt
-                    second_pose[2] += second_omega * dt
-                    second_pose[3] = t + dt
-
-                second_trajectory = np.asarray(second_trajectory)
-                trajectories.append(second_trajectory)
-                candidate = Candidate(v, omega, second_trajectory)
-                mask = self.getCandidateMask(candidate)
-                candidates_at_speed.append([omega, mask])
-                mega_mask = np.logical_or(mega_mask, mask)
         # plt.imshow(mega_mask, extent=[-8, 12, -10, 10])
         # plt.show()
-
-        candidates.append([v, candidates_at_speed])
-
-        # Now med speed
-        v = top_speed * 0.667
-        Omega = np.linspace(-0.2, 0.2, 5)
-        candidates_at_speed = []
-        for omega in Omega:
-            pose = np.zeros(4)  # Start at ego position, zero speed, zero (relative) yaw
-            trajectory = []
-
-            for t in np.arange(0, time_horizon, dt):
-                trajectory.append(pose.copy())
-                pose[0] += v * math.cos(pose[2]) * dt
-                pose[1] += v * math.sin(pose[2]) * dt
-                pose[2] += omega * dt
-                pose[3] = t + dt
-
-            for second_omega in Omega:
-                second_trajectory = trajectory.copy()
-                second_pose = pose.copy()
-
-                for t in np.arange(0, time_horizon, dt):
-                    second_trajectory.append(second_pose.copy())
-                    second_pose[0] += v * math.cos(second_pose[2]) * dt
-                    second_pose[1] += v * math.sin(second_pose[2]) * dt
-                    second_pose[2] += second_omega * dt
-                    second_pose[3] = t + dt
-
-                second_trajectory = np.asarray(second_trajectory)
-                trajectories.append(second_trajectory)
-                candidate = Candidate(v, omega, second_trajectory)
-                mask = self.getCandidateMask(candidate)
-                candidates_at_speed.append([omega, mask])
-                mega_mask = np.logical_or(mega_mask, mask)
-
-            # plt.imshow(mask, extent=[-8, 12, -10, 10])
-            # plt.show()
-
-        # plt.imshow(mega_mask, extent=[-8, 12, -10, 10])
-        # plt.show()
-
-        candidates.append([v, candidates_at_speed])
-
-        # Now low speed
-        mega_mask = np.zeros((100, 100))
-
-        v = top_speed * 0.333
-        Omega = np.linspace(-0.3, 0.3, 7)
-        candidates_at_speed = []
-        for omega in Omega:
-            pose = np.zeros(4)  # Start at ego position, zero speed, zero (relative) yaw
-            trajectory = []
-
-            for t in np.arange(0, time_horizon, dt):
-                trajectory.append(pose.copy())
-                pose[0] += v * math.cos(pose[2]) * dt
-                pose[1] += v * math.sin(pose[2]) * dt
-                pose[2] += omega * dt
-                pose[3] = t + dt
-
-            for second_omega in Omega:
-                second_trajectory = trajectory.copy()
-                second_pose = pose.copy()
-
-                for t in np.arange(0, time_horizon, dt):
-                    second_trajectory.append(second_pose.copy())
-                    second_pose[0] += v * math.cos(second_pose[2]) * dt
-                    second_pose[1] += v * math.sin(second_pose[2]) * dt
-                    second_pose[2] += second_omega * dt
-                    second_pose[3] = t + dt
-
-                second_trajectory = np.asarray(second_trajectory)
-                trajectories.append(second_trajectory)
-                candidate = Candidate(v, omega, second_trajectory)
-                mask = self.getCandidateMask(candidate)
-                candidates_at_speed.append([omega, mask])
-                mega_mask = np.logical_or(mega_mask, mask)
-
-        # plt.imshow(mega_mask, extent=[-8, 12, -10, 10])
-        # plt.show()
-
-        candidates.append([v, candidates_at_speed])
-
-        # plt.figure()
-        # plt.gca().set_aspect("equal")
-
-        candidates_msg = TrajectoryCandidates()
-
-        index = 0
-
-        for v, candidates_at_speed in candidates:
-
-            for omega, mask in candidates_at_speed:
-                candidate_msg = TrajectoryCandidate()
-                candidate_msg.omega = omega
-                candidate_msg.speed = v
-                trajectory = trajectories[index]
-
-                path_msg = Path()
-
-                stamp = self.get_clock().now().to_msg()
-                for x, y, omega, t in trajectory:
-                    pose_msg = PoseStamped()
-                    pose_msg.pose.position.x = x
-                    pose_msg.pose.position.y = y
-                    pose_msg.header.frame_id = "base_link"
-                    pose_msg.header.stamp = stamp
-
-                    path_msg.poses.append(pose_msg)
-
-                candidate_msg.trajectory = path_msg
-                candidates_msg.candidates.append(candidate_msg)
-
-                print(v, omega, trajectory)
-
-                index += 1
-
-        self.candidates_msg = candidates_msg
-
-        # self.candidates_pub.publish(candidates_msg)
-
-        # for trajectory in trajectories:
-        #     trajectory = np.asarray(trajectory)
-        #     plt.plot(trajectory[:, 0], trajectory[:, 1])
-
-        # plt.savefig("candidates.png")
-
-        self.candidates = candidates
-
-    def getCandidateMask(self, candidate: Candidate, collision_radius: float = 1.0):
-
-        collision_radius_px = collision_radius / 0.2
-
-        grid_coords = candidate.trajectory.copy()[:, :2]
-        grid_coords[:, 1] += 10
-        grid_coords[:, 0] += 8
-        grid_coords /= 0.2
-
-        # grid_coords[:, 0] = self.grid_info.height - grid_coords[:, 1]
-
-        # display_img = img.copy()
-        mask = np.zeros((100, 100), dtype=bool)
-
-        print(candidate.speed, candidate.omega)
-        for pixel_coord in grid_coords:
-            print(pixel_coord)
-            rr, cc = disk(pixel_coord, collision_radius_px, shape=(100, 100))
-            # display_img[cc, rr] = 50
-            mask[cc, rr] = True
-
-        return mask
-
-    def getTotalCost(self, candidate: Candidate, collision_radius: float = 1.0):
-
-        collision_radius_px = collision_radius / self.grid_info.resolution
-
-        if self.total_cost_map is None:
-            return
-
-        grid_coords = candidate.trajectory.copy()[:, :2]
-        grid_coords[:, 1] -= self.grid_info.origin.position.y
-        grid_coords[:, 0] -= self.grid_info.origin.position.x
-        grid_coords /= self.grid_info.resolution
-
-        # grid_coords[:, 0] = self.grid_info.height - grid_coords[:, 1]
-
-        img = self.total_cost_map.copy()
-        # display_img = img.copy()
-        mask = np.zeros_like(self.total_cost_map)
-
-        total_cost = 0
-
-        # fig = plt.figure()
-
-        for pixel_coord in grid_coords:
-            rr, cc = disk(pixel_coord, collision_radius_px, shape=img.shape)
-            # display_img[cc, rr] = 50
-            mask[cc, rr] = 1
-
-            total_cost += np.sum(self.total_cost_map[cc, rr])
-
-        total_cost = np.sum(self.total_cost_map[mask > 0])
-
-        # plt.plot(candidate.trajectory[:, 0], candidate.trajectory[:, 1])
-        # plt.imshow(display_img, extent=[-8, 12, -10, 10], cmap="summer")
-        # plt.title(f"v={candidate.speed}, o={candidate.omega}, {total_cost}")
-        # # plt.show()
-        # plt.savefig("candidate_cost.png")
-        # plt.close(fig)
-
-        # Now penalize slow candidates
-
-        if (candidate.speed) > 0.9:
-            total_cost *= 0.5
-
-        return total_cost
 
     def latLonToMap(self, lat: float, lon: float):
         lat0, lon0, _ = self.get_parameter("map_origin_lat_lon_alt_degrees").value
@@ -504,6 +270,9 @@ class PlannerNode(Node):
             self.get_logger().error(f"Ego position unknown.")
 
         closest_distance = 999999.9
+
+        closest_seedling = None
+
         for seedling_pt in self.seedling_points:
             seedling_x, seedling_y = seedling_pt
 
@@ -513,6 +282,9 @@ class PlannerNode(Node):
                 closest_distance = dist
                 closest_seedling = seedling_pt
 
+        if closest_seedling is None:
+            self.get_logger().error("Could not find closest seedling point.")
+            return None
         closest_seedling_bl = self.transformToBaselink([closest_seedling])
 
         print(f"Ego Yaw: {self.ego_yaw}")

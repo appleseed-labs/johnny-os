@@ -53,10 +53,16 @@ def generate_launch_description():
     trajectory_planner = Node(package="trajectory_planning", executable="planner")
 
     rosbridge_server = Node(
-        package="rosbridge_server", executable="rosbridge_websocket"
+        package="rosbridge_server",
+        executable="rosbridge_websocket",
+        parameters=[{"ros_port": 9090}],
     )
 
-    xarm_controller = Node(package="xarm_control", executable="xarm_control")
+    xarm_controller = Node(
+        package="xarm_control",
+        executable="xarm_control",
+        parameters=[{"sim_only": False}],
+    )
 
     return LaunchDescription(
         [

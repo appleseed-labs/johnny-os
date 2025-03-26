@@ -56,6 +56,7 @@ class PoseState(Enum):
     HOME = 0
     OVERHEAD = 1
     READY = 2
+    UNKNOWN = 3
 
 
 class JointTrajectory:
@@ -120,52 +121,6 @@ def getStraightLineTrajectoryInJointSpace(
         return JointTrajectory(np.asarray(qs), np.asarray(ts))
 
 
-# def getStraightLineTrajectoryInTaskSpace(
-#     chain: Chain,
-#     q_start: np.ndarray,
-#     q_end: np.ndarray,
-#     duration,
-#     dt,
-#     slice_joints=False,
-# ) -> JointTrajectory:
-#     assert len(q_start) == len(q_end)
-
-#     pos_start = chain.forward_kinematics(q_start)[:3, 3]
-#     pos_end = chain.forward_kinematics(q_end)[:3, 3]
-
-#     d_pos = pos_end - pos_start
-
-#     n_steps = int(duration / dt)
-#     d_pos_t = (
-#         d_pos / n_steps
-#     )  # The change in end effector position to make at each step
-
-#     qs = []
-#     ts = []
-
-#     # fig, (ax) = plt.subplots(1, 1)
-
-#     initial_guess = q_start
-
-#     for i in range(1, n_steps + 1):
-#         pos_i = pos_start + d_pos_t * i
-#         # ax.scatter(pos_i[1], pos_i[2])
-
-#         ik = chain.inverse_kinematics(pos_i, initial_position=initial_guess)
-
-#         initial_guess = ik
-
-#         qs.append(ik)
-#         ts.append(i * dt)
-
-#     # plt.show()
-
-#     if slice_joints:
-#         return JointTrajectory(np.asarray(qs)[:, 1:7], np.asarray(ts))
-#     else:
-#         return JointTrajectory(np.asarray(qs), np.asarray(ts))
-
-
 class XarmControlNode(Node):
     def __init__(self):
         super().__init__("xarm_control_node")
@@ -179,7 +134,7 @@ class XarmControlNode(Node):
 
         self.declare_parameter(
             "sim_only",
-            True,
+            False,
             ParameterDescriptor(
                 description="Skip xArm connection, only send EcoSim signals"
             ),
@@ -188,7 +143,7 @@ class XarmControlNode(Node):
 
         self.declare_parameter(
             "planting_time_secs",
-            3.0,
+            10.0,
             ParameterDescriptor(
                 description="Total time it takes for the arm to plant a seedling, in seconds."
             ),
@@ -204,21 +159,6 @@ class XarmControlNode(Node):
         self.start_driving_pub = self.create_publisher(
             Empty, "/behavior/start_driving", 1
         )
-
-        # self.chain = Chain.from_urdf_file(
-        #     "description/xarm6/xarm6.urdf",
-        #     base_elements=["link_base"],
-        #     active_links_mask=[
-        #         False,
-        #         True,
-        #         True,
-        #         True,
-        #         True,
-        #         True,
-        #         True,
-        #         False,
-        #     ],
-        # )
 
         self.is_planting = False
         self.planting_stop_time = time.time()
@@ -238,7 +178,7 @@ class XarmControlNode(Node):
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
 
-        speed = 35
+        self.max_angular_speed = 80
 
         code, current_joint_angles = self.arm.get_servo_angle()
 
@@ -258,20 +198,24 @@ class XarmControlNode(Node):
         elif np.allclose(current_joint_angles, OVERHEAD_Q, atol=0.1):
             self.get_logger().info("Starting at overhead")
             self.fsm_state = PoseState.OVERHEAD
-            self.goHome(speed=speed)
+            self.goHome(speed=self.max_angular_speed)
 
         elif np.allclose(current_joint_angles, READY_Q, atol=0.1):
             self.get_logger().info("Starting at ready")
             self.fsm_state = PoseState.READY
-            self.goHome(speed=speed)
+            self.goHome(speed=self.max_angular_speed)
 
-        self.goHome(speed=speed)
-        self.goOverhead(speed=speed)
-        self.goReady()
+        else:
+            self.get_logger().error("Starting at unknown position")
+            self.fsm_state = PoseState.UNKNOWN
+            self.goHome(speed=self.max_angular_speed, force=True)
+
+        # self.goOverhead(speed=speed)
+        # self.goReady()
 
     def checkIfPlantingComplete(self):
         if self.is_planting and time.time() > self.planting_stop_time:
-            self.get_logger().info("Planting complete")
+            self.get_logger().info("Planting complete.")
             self.is_planting = False
             self.start_driving_pub.publish(Empty())
 
@@ -285,14 +229,18 @@ class XarmControlNode(Node):
         self.get_logger().info("Received start planting signal")
         self.is_planting = True
         self.planting_stop_time = time.time() + self.planting_time_secs
+        self.goReady()
         self.goHome()
 
     def setJointPosition(self, q: list[float], speed=25) -> int:
         self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
 
-    def goHome(self, speed=25):
+    def goHome(self, speed=None, force=True):
         if self.sim_only:
             return
+
+        if speed is None:
+            speed = self.max_angular_speed
 
         if self.fsm_state == PoseState.READY:
             self.get_logger().info("Going to overhead from ready")
@@ -308,25 +256,69 @@ class XarmControlNode(Node):
             self.get_logger().info("Already at home")
             return
 
+        elif force:
+            self.get_logger().warning("Going to home from unknown")
+
+            self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
+            self.fsm_state = PoseState.HOME
+
         else:
             assert NotImplementedError(
                 "Cannot go home from state {}".format(self.fsm_state)
             )
 
-    def goOverhead(self, speed=25):
+    def goOverhead(self, speed=None):
         if self.sim_only:
             return
 
-        self.arm.set_servo_angle(angle=OVERHEAD_Q, speed=speed, wait=True)
-        self.get_logger().info("Now at overhead position")
-        self.fsm_state = PoseState.OVERHEAD
+        if speed is None:
+            speed = self.max_angular_speed
 
-    def goReady(self, speed=25):
+        if self.fsm_state == PoseState.READY:
+            self.get_logger().info("Going to overhead from ready")
+            self.arm.set_servo_angle(angle=OVERHEAD_Q, speed=speed, wait=True)
+            self.get_logger().info("Now at overhead position")
+            self.fsm_state = PoseState.OVERHEAD
+            return
+
+        elif self.fsm_state == PoseState.HOME:
+            self.get_logger().info("Going to overhead from home")
+            self.arm.set_servo_angle(angle=OVERHEAD_Q, speed=speed, wait=True)
+            self.get_logger().info("Now at overhead position")
+            self.fsm_state = PoseState.OVERHEAD
+            return
+
+        else:
+            self.get_logger().error(f"Unsupported state {self.fsm_state}")
+            return
+
+    def goReady(self, speed=None):
         if self.sim_only:
             return
-        self.arm.set_servo_angle(angle=READY_Q, speed=speed, wait=True)
-        self.get_logger().info("Now at ready position")
-        self.fsm_state = PoseState.READY
+
+        if speed is None:
+            speed = self.max_angular_speed
+
+        if self.fsm_state == PoseState.OVERHEAD:
+            self.get_logger().info("Going to ready from overhead")
+            self.arm.set_servo_angle(angle=READY_Q, speed=speed, wait=True)
+            self.get_logger().info("Now at ready position")
+            self.fsm_state = PoseState.READY
+            return
+
+        if self.fsm_state == PoseState.HOME:
+            self.get_logger().info("Going to overhead from home")
+            self.goOverhead(speed=speed)
+            self.goReady(speed=speed)
+            return
+
+        elif self.fsm_state == PoseState.READY:
+            self.get_logger().info("Already at ready")
+            return
+
+        else:
+            self.get_logger().error(f"Unsupported state {self.fsm_state}")
+            return
 
     def handleCode(self, code: int):
         """

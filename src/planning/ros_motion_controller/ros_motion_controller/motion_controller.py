@@ -9,6 +9,10 @@ import math, time
 import numpy as np
 import pyproj
 
+"""
+Author: Rohan Walia
+"""
+
 
 class MotionController(Node):
     """Class to help with autonomous motion control using Pure Pursuit"""
@@ -24,13 +28,11 @@ class MotionController(Node):
 
         # Subscribers
         self.gnss_subscription = self.create_subscription(
-            NavSatFix, "gnss/fix", self.gnss_callback, 10
+            NavSatFix, "gnss/fix", self.gnssCb, 10
         )
-        self.imu_subscription = self.create_subscription(
-            Imu, "/imu", self.imu_callback, 10
-        )
+        self.imu_subscription = self.create_subscription(Imu, "/imu", self.imuCb, 10)
         self.waypoints_subscription = self.create_subscription(
-            PoseArray, "/waypoints", self.waypoints_callback, 10
+            PoseArray, "/waypoints", self.waypoints_cb, 10
         )
 
         # NOTE: May need to make this dynamic
@@ -55,7 +57,7 @@ class MotionController(Node):
         # NOTE: This is for testing purposes
         # self.controller_signal_publisher.publish(self.create_bool_message(True))
 
-    def waypoints_callback(self, msg):
+    def waypoints_cb(self, msg: PoseArray):
         """Callback to get waypoints from path planning"""
         poses = msg.poses
         # Get the needed x, y tuples for waypoints
@@ -64,9 +66,9 @@ class MotionController(Node):
             self.waypoints.append(loc_tuple)
 
         # Timer for control loop
-        self.timer = self.create_timer(0.1, self.control_loop)
+        self.timer = self.create_timer(0.1, self.spinController)
 
-    def gnss_callback(self, msg):
+    def gnssCb(self, msg: NavSatFix):
         """Stores the first GNSS fix as (0,0) and converts subsequent coordinates."""
         utm_x, utm_y = self.proj_utm(msg.longitude, msg.latitude)  # UTM (E, N)
 
@@ -87,7 +89,7 @@ class MotionController(Node):
         self.current_y = (utm_y - self.ref_y) * -1
         self.get_logger().info(f"Set current at: ({self.current_x}, {self.current_y})")
 
-    def imu_callback(self, msg):
+    def imuCb(self, msg):
         """Stores the angular value from the IMU"""
         if msg.orientation.w <= 0:
             return
@@ -108,7 +110,7 @@ class MotionController(Node):
         self.imu_reading = math.pi / 2 + yaw
         # self.get_logger().info(f'Set current at: ({self.imu_reading})')
 
-    def find_lookahead_point(self, lookahead_distance):
+    def findLookaheadPoint(self, lookahead_distance):
         """Find a point on the path at lookahead distance ahead of the robot.
 
         Returns:
@@ -145,7 +147,7 @@ class MotionController(Node):
 
         return None  # No valid lookahead point found
 
-    def find_curvature(
+    def findCurvature(
         self, lookahead_point, robot_heading, robot_loc, lookahead_distance
     ):
         """Function used to find curvature to guide robot towards path
@@ -215,9 +217,7 @@ class MotionController(Node):
         msg_bool.data = data
         return msg_bool
 
-    def find_ang_lin_speed(
-        self, lookahead_point, remaining_distance, adaptive_lookahead
-    ):
+    def findAngLinSpeeds(self, lookahead_point, remaining_distance, adaptive_lookahead):
         """Find the angular and linear speed
 
         Args:
@@ -230,7 +230,7 @@ class MotionController(Node):
         """
         # Compute curvature
         loc_cur = np.array([self.current_x, self.current_y])
-        curvature = self.find_curvature(
+        curvature = self.findCurvature(
             lookahead_point, self.imu_reading, loc_cur, adaptive_lookahead
         )
         angular_speed = math.atan(curvature)
@@ -243,7 +243,7 @@ class MotionController(Node):
 
         return angular_speed, linear_speed
 
-    def find_adaptive_lookahead(self):
+    def findAdaptiveLookahead(self):
         """Dynamically calculate lookahead distance based on the closest waypoint segment."""
         if self.current_x is None or self.current_y is None:
             return 1.5  # Default lookahead if no position data
@@ -287,7 +287,7 @@ class MotionController(Node):
         # self.get_logger().info(f"Adaptive lookahead distance: {best_lookahead}")
         return best_lookahead
 
-    def control_loop(self):
+    def spinController(self):
         """Compute and publish velocity commands using Pure Pursuit."""
         if self.current_x is None or self.current_y is None or self.imu_reading is None:
             return
@@ -306,13 +306,13 @@ class MotionController(Node):
             return
 
         # Get the lookhead distance adaptively
-        adaptive_lookahead = self.find_adaptive_lookahead()
+        adaptive_lookahead = self.findAdaptiveLookahead()
         if adaptive_lookahead is None:
             self.get_logger().warn("Couldn't get a adaptive lookahead distance!")
             return
 
         # Find lookahead point
-        lookahead_point = self.find_lookahead_point(adaptive_lookahead)
+        lookahead_point = self.findLookaheadPoint(adaptive_lookahead)
         # No lookahead point so stop
         if lookahead_point is None:
             self.get_logger().warn("No valid lookahead point found!")
@@ -326,7 +326,7 @@ class MotionController(Node):
             return
 
         # Compute angular and linear speed
-        angular_speed, linear_speed = self.find_ang_lin_speed(
+        angular_speed, linear_speed = self.findAngLinSpeeds(
             lookahead_point, remaining_distance, adaptive_lookahead
         )
 

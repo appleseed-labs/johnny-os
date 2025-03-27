@@ -16,15 +16,28 @@ def generate_launch_description():
     with open("description/xarm6/xarm6_with_gripper.urdf", "r") as f:
         robot_description = f.read()
 
-    robot_state_publisher_node = Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        output="screen",
-        parameters=[{"robot_description": robot_description}],
-        remappings=[
-            ("/tf", "tf"),
-            ("/tf_static", "tf_static"),
-        ],
+        # robot_state_publisher_node = Node(
+        #     package="robot_state_publisher",
+        #     executable="robot_state_publisher",
+        #     output="screen",
+        #     parameters=[{"robot_description": robot_description}],
+        #     remappings=[
+        #         ("/tf", "tf"),
+        #         ("/tf_static", "tf_static"),
+        #     ],
+        # )
+
+    description_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution(
+                [
+                    FindPackageShare("johnny_description"),
+                    "launch",
+                    "description.launch.py",
+                ]
+            )
+        ),
+        launch_arguments={}.items(),
     )
 
     # Connects ROS to EcoSim
@@ -67,9 +80,10 @@ def generate_launch_description():
     return LaunchDescription(
         [
             # INFRASTRUCTURE
-            robot_state_publisher_node,
+            description_launch,
+            # robot_state_publisher_node,
             # INTERFACES
-            rosbridge_server,
+            # rosbridge_server,
             unity_endpoint,
             # PERCEPTION
             # PLANNING

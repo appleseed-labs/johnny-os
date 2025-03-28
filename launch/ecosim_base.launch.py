@@ -9,6 +9,8 @@ from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
 import yaml
 
+MAP_ORIGIN_LAT_LON_ALT_DEGREES = [40.443166012335624, -79.940285695498559, 288.0961589]
+
 
 def generate_launch_description():
 
@@ -77,6 +79,12 @@ def generate_launch_description():
         parameters=[{"sim_only": False}],
     )
 
+    fix_to_transform_node = Node(
+        package="gnss_interface",
+        executable="fix_to_transform_node",
+        parameters=[{"map_origin_lat_lon_alt_degrees": MAP_ORIGIN_LAT_LON_ALT_DEGREES}],
+    )
+
     return LaunchDescription(
         [
             # INFRASTRUCTURE
@@ -87,9 +95,10 @@ def generate_launch_description():
             unity_endpoint,
             # PERCEPTION
             # PLANNING
+            fix_to_transform_node,
             # motion_controller,
             # trajectory_planner,
-            waypoint_publisher,
+            # waypoint_publisher,
             # VISUALIZATION
             # rviz2,
         ]

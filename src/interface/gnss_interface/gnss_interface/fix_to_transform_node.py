@@ -1,21 +1,29 @@
+# -----------------------------------------------------------------------------
+# Description: Converts a NavSatFix and Imu message to a transform and odometry message.
+# Author: Will Heitman
+# (c) 2025 Appleseed Labs. CMU Robotics Institute
+# -----------------------------------------------------------------------------
+
 import numpy as np
 import math
 import rclpy
 from rclpy.node import Node, ParameterDescriptor, ParameterType
+from tf2_ros import TransformBroadcaster
+from scipy.spatial.transform import Rotation as R
+import utm
 
 # Messages
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import NavSatFix, Imu
-
-from tf2_ros import TransformBroadcaster
-from scipy.spatial.transform import Rotation as R
 from std_msgs.msg import Header
-
-import utm
 
 
 class FixToTransformNode(Node):
+    """
+    Converts a NavSatFix and Imu message to a transform and odometry message.
+    """
+
     def __init__(self):
         super().__init__("fix_to_transform_node")
 

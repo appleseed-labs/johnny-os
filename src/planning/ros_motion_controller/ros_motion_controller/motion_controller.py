@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------------
+# Description: Generate twist commands using a Pure Pursuit controller
+# Author: Rohan Walia
+# (c) 2025 Appleseed Labs. CMU Robotics Institute
+# -----------------------------------------------------------------------------
+
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PoseArray
@@ -7,18 +13,16 @@ from scipy.spatial.transform import Rotation as R
 from std_msgs.msg import Bool
 import math, time
 import numpy as np
-import pyproj
-
-"""
-Author: Rohan Walia
-"""
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
 
 class MotionController(Node):
     """Class to help with autonomous motion control using Pure Pursuit"""
 
     def __init__(self):
-        super().__init__("MotionController")
+        super().__init__("motion_controller")
 
         # Publishers
         self.twist_publisher = self.create_publisher(Twist, "cmd_vel", 10)
@@ -27,37 +31,29 @@ class MotionController(Node):
         )
 
         # Subscribers
-        self.gnss_subscription = self.create_subscription(
-            NavSatFix, "gnss/fix", self.gnssCb, 10
-        )
-        self.imu_subscription = self.create_subscription(Imu, "/imu", self.imuCb, 10)
         self.waypoints_subscription = self.create_subscription(
-            PoseArray, "/waypoints", self.waypoints_cb, 10
+            PoseArray, "/waypoints", self.waypointsCb, 10
         )
 
-        # NOTE: May need to make this dynamic
-        # Proj converter for UTM (zone = 17 for Eastern America)
-        self.proj_utm = pyproj.Proj(proj="utm", zone=17, ellps="WGS84", south=False)
-
-        # Origin (set dynamically on first GNSS message)
-        self.ref_x = None
-        self.ref_y = None
-        self.imu_reading = None
+        # For looking up the robot's position on the map
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.waypoints = []
 
         # Current pose (initialize to None until received)
-        self.current_x = None
-        self.current_y = None
+        self.ego_x = None
+        self.ego_y = None
 
         # Counter to help us track the amount of lookahead_points not found
         self.lookahead_not_found_counter = 0
         # Initilize timer for control loop
-        self.timer = None
-        # NOTE: This is for testing purposes
-        # self.controller_signal_publisher.publish(self.create_bool_message(True))
+        self.create_timer(0.1, self.spinController)
 
-    def waypoints_cb(self, msg: PoseArray):
+        # NOTE: This is for testing purposes
+        self.controller_signal_publisher.publish(Bool(data=True))
+
+    def waypointsCb(self, msg: PoseArray):
         """Callback to get waypoints from path planning"""
         poses = msg.poses
         # Get the needed x, y tuples for waypoints
@@ -65,58 +61,14 @@ class MotionController(Node):
             loc_tuple = (pose.position.x, pose.position.y)
             self.waypoints.append(loc_tuple)
 
-        # Timer for control loop
-        self.timer = self.create_timer(0.1, self.spinController)
-
-    def gnssCb(self, msg: NavSatFix):
-        """Stores the first GNSS fix as (0,0) and converts subsequent coordinates."""
-        utm_x, utm_y = self.proj_utm(msg.longitude, msg.latitude)  # UTM (E, N)
-
-        if self.ref_x is None and self.ref_y is None:
-            self.ref_x, self.ref_y = utm_x, utm_y  # Set first GNSS reading as origin
-            self.get_logger().info(f"Set origin at: ({self.ref_x}, {self.ref_y})")
-
-        # If we are facing north/south then adjust the gnss positioning accordingly
-        # if self.imu_reading == None:
-        #     return
-        # elif self.imu_reading >= 0 and self.imu_reading <= math.pi:
-        #     sign = -1 # Facing North
-        # else:
-        #     sign = 1 # Facing South
-
-        # Convert current position relative to the origin
-        self.current_x = (utm_x - self.ref_x) * -1
-        self.current_y = (utm_y - self.ref_y) * -1
-        self.get_logger().info(f"Set current at: ({self.current_x}, {self.current_y})")
-
-    def imuCb(self, msg):
-        """Stores the angular value from the IMU"""
-        if msg.orientation.w <= 0:
-            return
-
-        # Extract quaternion from IMU message
-        quaternion = (
-            msg.orientation.x,
-            msg.orientation.y,
-            msg.orientation.z,
-            msg.orientation.w,
-        )
-
-        self.get_logger().info(f"{quaternion}")
-
-        # Convert quaternion to roll, pitch, yaw
-        _, _, yaw = R.from_quat(quaternion).as_euler("xyz")
-        # Convert yaw from left handed NED to right handed ENU
-        self.imu_reading = math.pi / 2 + yaw
-        # self.get_logger().info(f'Set current at: ({self.imu_reading})')
-
     def findLookaheadPoint(self, lookahead_distance):
         """Find a point on the path at lookahead distance ahead of the robot.
 
         Returns:
             Lookahead_point: Point that the robot should move towards
         """
-        if self.current_x is None or self.current_y is None:
+
+        if self.ego_x is None or self.ego_y is None:
             return None
 
         for i in range(len(self.waypoints) - 1):
@@ -128,7 +80,7 @@ class MotionController(Node):
             path_length = np.linalg.norm(path_vector)  # Length of the path segment
 
             # Vector from robot to the first waypoint
-            to_p1 = p1 - np.array([self.current_x, self.current_y])
+            to_p1 = p1 - np.array([self.ego_x, self.ego_y])
 
             # Quadratic coefficients for solving for the lookahead distance
             a = np.dot(path_vector, path_vector)
@@ -194,10 +146,10 @@ class MotionController(Node):
         """Stop the robot and reset values"""
         # Stop if close to goal
         self.get_logger().info("Goal reached!")
-        self.get_logger().info(f"Currently at: ({self.current_x}, {self.current_y})")
+        self.get_logger().info(f"Currently at: ({self.ego_x}, {self.ego_y})")
         self.reset()
         # Send signal to let waypoint node that we can accept more waypoints
-        self.controller_signal_publisher.publish(self.create_bool_message(True))
+        self.controller_signal_publisher.publish(Bool(data=True))
 
     def reset(self):
         """Resets key values and the robot"""
@@ -207,15 +159,6 @@ class MotionController(Node):
         self.twist_publisher.publish(twist_msg)
         self.waypoints = []
         self.timer.cancel()
-        # Resets the coordinate origins
-        # self.ref_x = None
-        # self.ref_y = None
-
-    def create_bool_message(self, data):
-        """Creates a bool message to send based on data"""
-        msg_bool = Bool()
-        msg_bool.data = data
-        return msg_bool
 
     def findAngLinSpeeds(self, lookahead_point, remaining_distance, adaptive_lookahead):
         """Find the angular and linear speed
@@ -229,7 +172,7 @@ class MotionController(Node):
             Angular and Linear speeds
         """
         # Compute curvature
-        loc_cur = np.array([self.current_x, self.current_y])
+        loc_cur = np.array([self.ego_x, self.ego_y])
         curvature = self.findCurvature(
             lookahead_point, self.imu_reading, loc_cur, adaptive_lookahead
         )
@@ -245,7 +188,7 @@ class MotionController(Node):
 
     def findAdaptiveLookahead(self):
         """Dynamically calculate lookahead distance based on the closest waypoint segment."""
-        if self.current_x is None or self.current_y is None:
+        if self.ego_x is None or self.ego_y is None:
             return 1.5  # Default lookahead if no position data
 
         min_dist = float("inf")
@@ -258,7 +201,7 @@ class MotionController(Node):
 
             # Project the robot's position onto the path segment
             segment_vec = np.array([x2 - x1, y2 - y1])
-            robot_vec = np.array([self.current_x - x1, self.current_y - y1])
+            robot_vec = np.array([self.ego_x - x1, self.ego_y - y1])
             segment_length = np.linalg.norm(segment_vec)
 
             if segment_length == 0:
@@ -273,9 +216,7 @@ class MotionController(Node):
             closest_y = y1 + t * (y2 - y1)
 
             # Distance from robot to closest point
-            distance = np.linalg.norm(
-                [self.current_x - closest_x, self.current_y - closest_y]
-            )
+            distance = np.linalg.norm([self.ego_x - closest_x, self.ego_y - closest_y])
 
             # Adaptive lookahead logic
             if distance < min_dist:
@@ -289,13 +230,37 @@ class MotionController(Node):
 
     def spinController(self):
         """Compute and publish velocity commands using Pure Pursuit."""
-        if self.current_x is None or self.current_y is None or self.imu_reading is None:
+
+        try:
+            # Get the latest transform from map to base_link
+            t = self.tf_buffer.lookup_transform("base_link", "map", rclpy.time.Time())
+            self.ego_x = t.transform.translation.x
+            self.ego_y = t.transform.translation.y
+            self.ego_yaw = R.from_quat(
+                [
+                    t.transform.rotation.x,
+                    t.transform.rotation.y,
+                    t.transform.rotation.z,
+                    t.transform.rotation.w,
+                ]
+            ).as_euler("xyz")[2]
+
+        except TransformException as ex:
+            self.get_logger().warning(
+                f"Could not find ego transform. Skipping control loop: {ex}"
+            )
+            return
+
+        if len(self.waypoints) == 0:
+            self.get_logger().warning(
+                "No waypoints received yet. Skipping control loop."
+            )
             return
 
         # Calculate the remaining distance
         remaining_distance = math.sqrt(
-            (self.waypoints[-1][0] - self.current_x) ** 2
-            + (self.waypoints[-1][1] - self.current_y) ** 2
+            (self.waypoints[-1][0] - self.ego_x) ** 2
+            + (self.waypoints[-1][1] - self.ego_y) ** 2
         )
 
         # Stop if close to goal

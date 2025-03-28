@@ -264,6 +264,8 @@ class MotionController(Node):
         )
 
         # Stop if close to goal
+
+        # TODO: Parameterize this distance threshold
         if remaining_distance < 0.25:
             self.get_logger().info("We are close to the waypoint!")
             # Stop the robot
@@ -271,13 +273,13 @@ class MotionController(Node):
             return
 
         # Get the lookhead distance adaptively
-        adaptive_lookahead = self.findAdaptiveLookahead()
-        if adaptive_lookahead is None:
-            self.get_logger().warn("Couldn't get a adaptive lookahead distance!")
+        adaptive_lookahead_distance = self.findAdaptiveLookahead()
+        if adaptive_lookahead_distance is None:
+            self.get_logger().warning("Couldn't get a adaptive lookahead distance!")
             return
 
         # Find lookahead point
-        lookahead_point = self.findLookaheadPoint(adaptive_lookahead)
+        lookahead_point = self.findLookaheadPoint(adaptive_lookahead_distance)
         # No lookahead point so stop
         if lookahead_point is None:
             self.get_logger().warn("No valid lookahead point found!")
@@ -292,12 +294,14 @@ class MotionController(Node):
 
         # Compute angular and linear speed
         angular_speed, linear_speed = self.findAngLinSpeeds(
-            lookahead_point, remaining_distance, adaptive_lookahead
+            lookahead_point, remaining_distance, adaptive_lookahead_distance
         )
 
         # Publish Twist command
         twist_msg = Twist()
         twist_msg.linear.x = linear_speed
+
+        # TODO: Parameterize this speed limit
         twist_msg.angular.z = max(min(angular_speed, 1.5), -1.5)
 
         # self.get_logger().info(f'Lin speed and ang speed: ({linear_speed}, {angular_speed})')

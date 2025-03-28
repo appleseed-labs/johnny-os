@@ -1,10 +1,13 @@
 import rclpy
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseArray, Pose
+from geometry_msgs.msg import PoseArray, Pose, PoseStamped
 from std_msgs.msg import Bool
 from collections import deque
 import random
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
 
 class WayPointController(Node):
@@ -27,6 +30,12 @@ class WayPointController(Node):
             Bool, "/controller_signal", self.mc_callback, 10
         )
 
+        self.create_subscription(PoseStamped, "/goal_pose", self.goalPoseCb, 1)
+
+        # For looking up the robot's position on the map
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
         # Boolean needed
         self.mc_bool = True
 
@@ -38,6 +47,33 @@ class WayPointController(Node):
                 # [(0, 0), (1.0, 3.0), (4.0, 9.75), (10.0, 12.0)],  # planting Area 3
             ]
         )
+
+    def goalPoseCb(self, msg: PoseStamped):
+        """Contruct a Dubbins path from the current ego pose to the goal pose
+
+        Args:
+            msg (PoseStamped): The goal pose
+        """
+
+        try:
+            # Get the latest transform from map to base_link
+            t = self.tf_buffer.lookup_transform("base_link", "map", rclpy.time.Time())
+            self.ego_x = t.transform.translation.x
+            self.ego_y = t.transform.translation.y
+            self.ego_yaw = R.from_quat(
+                [
+                    t.transform.rotation.x,
+                    t.transform.rotation.y,
+                    t.transform.rotation.z,
+                    t.transform.rotation.w,
+                ]
+            ).as_euler("xyz")[2]
+
+        except TransformException as ex:
+            self.get_logger().warning(
+                f"Could not find ego transform. Skipping path generation: {ex}"
+            )
+            return
 
     def mc_callback(self, msg):
         """Callback to check if the motion controller is ready for waypoints"""

@@ -22,7 +22,7 @@ class obstacleDetector(Node):
     # publish rate
     RATE = 100
     # grid resolution (m/cell)
-    GRID_RES = 0.5
+    GRID_RES = 0.1
 
     def __init__(self):
         # initialize variables
@@ -77,28 +77,28 @@ class obstacleDetector(Node):
         min_x = min(processed_pc[:,0])
         max_y = max(processed_pc[:,1])
         min_y = min(processed_pc[:,1])
-        origin_x = -min_x
-        origin_y = -min_y
+        grid_min_x = int(min_x/self.GRID_RES) * self.GRID_RES
+        grid_min_y = int(min_y/self.GRID_RES) * self.GRID_RES
 
-        width = int(max_x + 1 - min_x)
-        height = int(max_y + 1 - min_y)
+        width = int((max_x - grid_min_x)/self.GRID_RES) + 1
+        height = int((max_y - grid_min_y)/self.GRID_RES) + 1
 
         grid = np.zeros((height, width), dtype = np.int8)
 
         for (x, y, z) in processed_pc:
-            grid_x = (x - origin_x)/self.GRID_RES
-            grid_y = (y - origin_y)/self.GRID_RES
+            grid_x = int((x - grid_min_x)/self.GRID_RES)
+            grid_y = int((y - grid_min_y)/self.GRID_RES)
             grid[grid_y, grid_x] = 1
         
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "robot_center_frame"
+        msg.header.frame_id = "robot_center_grid_frame"
         msg.info.map_load_time = self.map_load_time
-        msg.info.resolution = self.GRID_RES
+        msg.info.resolution = self.self.GRID_RES
         msg.info.width = max_x
         msg.info.height = max_y
-        msg.info.origin.position.x = origin_x
-        msg.info.origin.position.y = origin_y
+        msg.info.origin.position.x = (0-grid_min_x)/self.GRID_RES
+        msg.info.origin.position.y = (0-grid_min_y)/self.GRID_RES
         msg.data = np.flatten(grid).to_list()
         return msg
     

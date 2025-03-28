@@ -1,109 +1,73 @@
+import time
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import leastsq
 import casadi
-
-u = casadi.SX.sym("u")
 
 # CODE CREDIT: https://uuvsimulator.github.io/packages/uuv_simulator/docs/features/jupyter_notebooks/2d_dubins_path/
 
 
-def get_circle_pnt(u, pos, radius, offset=0.0):
+def get2dRotationMatrix(angle):
+    """
+    Generates a 2D rotation matrix for a given angle.
+    The rotation matrix is used to rotate a point or vector in a 2D plane
+    counterclockwise by the specified angle.
+    Parameters:
+        angle (float): The angle of rotation in radians.
+    Returns:
+        numpy.ndarray: A 2x2 rotation matrix.
+    """
+    return np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+
+
+u = casadi.SX.sym("u")
+
+
+def getCirclePoint(pos, radius, offset=0.0):
+    """
+    Generates points on a circle given its center position, radius, and an optional angular offset.
+    Args:
+        pos (tuple): A tuple (x, y) representing the center position of the circle.
+        radius (float): The radius of the circle.
+        offset (float, optional): An angular offset in radians to rotate the circle points. Defaults to 0.0.
+    Returns:
+        tuple: Two numpy arrays (x, y) representing the x and y coordinates of the points on the circle.
+    """
+
+    u = np.linspace(0, 1, 50)
     x = pos[0] + radius * np.cos(2 * np.pi * u + offset)
     y = pos[1] + radius * np.sin(2 * np.pi * u + offset)
     return x, y
 
 
-def get_circle(pos, radius, offset=0.0):
-    u = np.linspace(0, 1, 50)
-    return get_circle_pnt(u, pos, radius, offset)
+def getArcCenters(wp, radius, heading):
+    """
+    Calculate the center points of an arc (left and right) based on a waypoint, radius, and heading.
+    Args:
+        wp (numpy.ndarray): The waypoint position as a 2D vector (e.g., [x, y]).
+        radius (float): The radius of the arc.
+        heading (float): The heading angle in radians.
+    Returns:
+        dict: A dictionary containing the center points of the arc:
+            - 'R': The center of the arc to the right of the waypoint.
+            - 'L': The center of the arc to the left of the waypoint.
+    """
 
-
-def get_frame(angle):
-    return np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
-
-
-radius = 5
-wp_1 = np.array([2, 3])
-heading_1 = 10 * np.pi / 180
-wp_2 = np.array([20, 32])
-heading_2 = 130 * np.pi / 180
-
-frame_1 = get_frame(heading_1)
-frame_2 = get_frame(heading_2)
-
-center_1 = dict(
-    R=wp_1 - radius * frame_1[:, 1].flatten(), L=wp_1 + radius * frame_1[:, 1].flatten()
-)
-
-center_2 = dict(
-    R=wp_2 - radius * frame_2[:, 1].flatten(), L=wp_2 + radius * frame_2[:, 1].flatten()
-)
-
-
-def getCenter(wp, radius, heading):
-    frame = get_frame(heading)
+    frame = get2dRotationMatrix(heading)
     return dict(
         R=wp - radius * frame[:, 1].flatten(), L=wp + radius * frame[:, 1].flatten()
     )
 
 
-def plot_base():
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111)
-
-    # Plot first waypoint's L and R circles
-    ax.plot(
-        [wp_1[0], wp_1[0] + 5 * np.cos(heading_1)],
-        [wp_1[1], wp_1[1] + 5 * np.sin(heading_1)],
-        color="xkcd:neon pink",
-        linewidth=3,
-    )
-    ax.plot([wp_1[0]], [wp_1[1]], ".r", markersize=10)
-
-    x, y = get_circle(center_1["L"], radius)
-    ax.plot(x, y, "-.r")
-    x, y = get_circle(center_1["R"], radius)
-    ax.plot(x, y, "--r")
-
-    # Plot second waypoint's L and R circles
-    x, y = get_circle(wp_2, radius)
-    ax.plot(
-        [wp_2[0], wp_2[0] + 5 * np.cos(heading_2)],
-        [wp_2[1], wp_2[1] + 5 * np.sin(heading_2)],
-        color="xkcd:neon pink",
-        linewidth=3,
-    )
-    ax.plot([wp_2[0]], [wp_2[1]], ".b", markersize=10)
-
-    x, y = get_circle(center_2["L"], radius)
-    ax.plot(x, y, "-.b")
-    x, y = get_circle(center_2["R"], radius)
-    ax.plot(x, y, "--b")
-
-    ax.axis("equal")
-    ax.grid(True)
-
-    # plt.show()
-
-    return ax
-
-
-# plot_base()
-
-# print("RSR")
-
-
-def get_tangents(
+def getTangents(
     center_1,
     radius_1,
     heading_1,
     delta_1,
     center_2,
     radius_2,
-    heading_2,
+    end_yaw,
     delta_2,
-    plot=False,
+    resolution_meters=0.1,
 ):
     """
     Compute the tangents between two circles and optionally plot the results.
@@ -124,7 +88,7 @@ def get_tangents(
         Coordinates of the center of the second circle [x, y].
     radius_2 : float
         Radius of the second circle.
-    heading_2 : float
+    end_yaw : float
         Heading angle of the second circle in radians.
     delta_2 : float
         Direction multiplier for the second circle (+1 for counterclockwise, -1 for clockwise).
@@ -153,9 +117,9 @@ def get_tangents(
     >>> delta_1 = 1
     >>> center_2 = [10, 0]
     >>> radius_2 = 5
-    >>> heading_2 = 0
+    >>> end_yaw = 0
     >>> delta_2 = -1
-    >>> result = get_tangents(center_1, radius_1, heading_1, delta_1, center_2, radius_2, heading_2, delta_2, plot=True)
+    >>> result = get_tangents(center_1, radius_1, heading_1, delta_1, center_2, radius_2, end_yaw, delta_2, plot=True)
     """
 
     output = dict()
@@ -164,25 +128,25 @@ def get_tangents(
     u2 = casadi.SX.sym("u2")
 
     phi_1 = 2 * np.pi * u1 * delta_1 + heading_1 - delta_1 * np.pi / 2
-    phi_2 = 2 * np.pi * u2 * delta_2 + heading_2 - delta_2 * np.pi / 2
+    phi_2 = 2 * np.pi * u2 * delta_2 + end_yaw - delta_2 * np.pi / 2
 
     u1_func = lambda angle: (angle - heading_1 + delta_1 * np.pi / 2) / (
         delta_1 * 2 * np.pi
     )
-    u2_func = lambda angle: (angle - heading_2 + delta_2 * np.pi / 2) / (
+    u2_func = lambda angle: (angle - end_yaw + delta_2 * np.pi / 2) / (
         delta_2 * 2 * np.pi
     )
     # Make tangents vector functions
     tan_1 = casadi.cross(
         np.array([0, 0, 1]),
         np.array(
-            [delta_1 * radius * np.cos(phi_1), delta_1 * radius * np.sin(phi_1), 0]
+            [delta_1 * radius_1 * np.cos(phi_1), delta_1 * radius_2 * np.sin(phi_1), 0]
         ),
     )[0:2]
     tan_2 = casadi.cross(
         np.array([0, 0, 1]),
         np.array(
-            [delta_2 * radius * np.cos(phi_2), delta_2 * radius * np.sin(phi_2), 0]
+            [delta_2 * radius_1 * np.cos(phi_2), delta_2 * radius_2 * np.sin(phi_2), 0]
         ),
     )[0:2]
 
@@ -192,88 +156,10 @@ def get_tangents(
 
     # Plot the circles
 
-    if plot:
-        ax = plot_base()
-
-        ## Plot the circle center points
-        ax.plot(
-            [center_1[0]],
-            [center_1[1]],
-            marker=".",
-            color="xkcd:baby blue",
-            markersize=10,
-        )
-        ax.plot(
-            [center_2[0]],
-            [center_2[1]],
-            marker=".",
-            color="xkcd:baby blue",
-            markersize=10,
-        )
-
-        ## Plot a couple of tangent vectors
-        for i in np.linspace(0.2, 0.8, 5):
-            c1 = casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [i])
-            t1 = casadi.substitute(tan_1, casadi.vertcat(*[u1]), [i])
-            t1 *= 5 / casadi.norm_2(t1)
-
-            c1_np = np.array(casadi.DM(c1)).flatten()
-            t1_np = np.array(casadi.DM(t1)).flatten()
-            ax.plot(
-                [c1_np[0], c1_np[0] + t1_np[0]], [c1_np[1], c1_np[1] + t1_np[1]], "k"
-            )
-
-            c2 = casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [i])
-            t2 = casadi.substitute(tan_2, casadi.vertcat(*[u2]), [i])
-            t2 *= 5 / casadi.norm_2(t2)
-            c2_np = np.array(casadi.DM(c2)).flatten()
-            t2_np = np.array(casadi.DM(t2)).flatten()
-            ax.plot(
-                [c2_np[0], c2_np[0] + t2_np[0]], [c2_np[1], c2_np[1] + t2_np[1]], "k"
-            )
-
-        ## Plot line connecting the circle centers
-
-        ax.plot(
-            [center_1[0], center_2[0]],
-            [center_1[1], center_2[1]],
-            linestyle="--",
-            color="xkcd:lavender",
-        )
-
-        ## Plot the starting point of each circle
-        c1 = casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [0])
-        c2 = casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [0])
-
-        # Convert to numpy arrays for plotting
-        c1 = np.array(casadi.DM(c1)).flatten()
-        c2 = np.array(casadi.DM(c2)).flatten()
-        ax.plot(
-            [c1[0]], [c1[1]], marker="o", color="xkcd:reddish orange", markersize=15
-        )
-        ax.plot(
-            [c2[0]], [c2[1]], marker="o", color="xkcd:reddish orange", markersize=15
-        )
-
     # Compute the line connecting the circle's centers
     d = center_2 - center_1
     # Calculate normal vector to the connecting line
-    n = np.dot(get_frame(np.pi / 2), d / np.linalg.norm(d))
-
-    if plot:
-        ## Plotting the normal vectors
-        ax.plot(
-            [center_1[0], center_1[0] + radius_1 * n[0]],
-            [center_1[1], center_1[1] + radius_1 * n[1]],
-            linestyle="--",
-            color="xkcd:hot pink",
-        )
-        ax.plot(
-            [center_2[0], center_2[0] + radius_2 * n[0]],
-            [center_2[1], center_2[1] + radius_2 * n[1]],
-            linestyle="--",
-            color="xkcd:hot pink",
-        )
+    n = np.dot(get2dRotationMatrix(np.pi / 2), d / np.linalg.norm(d))
 
     ##########################################################
     # Compute the first tangent
@@ -294,14 +180,6 @@ def get_tangents(
     tangent_1 = c2 - c1
     tangent_1 /= casadi.norm_2(tangent_1)
 
-    if plot:
-        # Convert to numpy arrays for plotting
-        c1 = np.array(casadi.DM(c1)).flatten()
-        c2 = np.array(casadi.DM(c2)).flatten()
-        ax.plot(
-            [c1[0], c2[0]], [c1[1], c2[1]], linestyle="--", color="xkcd:kelly green"
-        )
-
     ## Compute the tangent vectors on the circles
     t1 = casadi.substitute(tan_1, casadi.vertcat(*[u1]), [u1_opt])
     t1 /= casadi.norm_2(t1)
@@ -311,7 +189,7 @@ def get_tangents(
     diff = float(casadi.norm_2(tangent_1 - t1) + casadi.norm_2(tangent_1 - t2))
 
     if np.isclose(diff, 0):
-        u = np.arange(0, u1_opt, 0.001)
+        u = np.arange(0, u1_opt, resolution_meters)
         output["C1"] = [
             casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [ui]) for ui in u
         ]
@@ -319,25 +197,10 @@ def get_tangents(
             casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [u1_opt]),
             casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [u2_opt]),
         ]
-        u = np.arange(u2_opt, 1, 0.001)
+        u = np.arange(u2_opt, 1, resolution_meters)
         output["C2"] = [
             casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [ui]) for ui in u
         ]
-
-    if plot:
-        ## Plot the tangent vectors on the circles that are parallel to the first tangent
-        ax.plot(
-            [c1[0], c1[0] + radius_1 * t1[0]],
-            [c1[1], c1[1] + radius_1 * t1[1]],
-            linestyle="-",
-            color="xkcd:bright purple",
-        )
-        ax.plot(
-            [c2[0], c2[0] + radius_2 * t2[0]],
-            [c2[1], c2[1] + radius_2 * t2[1]],
-            linestyle="-",
-            color="xkcd:bright purple",
-        )
 
     ##########################################################
     # Compute the second tangent
@@ -355,15 +218,6 @@ def get_tangents(
     tangent_2 = c2 - c1
     tangent_2 /= casadi.norm_2(tangent_2)
 
-    if plot:
-        ## Plotting the second tangent
-        # Convert to numpy arrays for plotting
-        c1 = np.array(casadi.DM(c1)).flatten()
-        c2 = np.array(casadi.DM(c2)).flatten()
-        ax.plot(
-            [c1[0], c2[0]], [c1[1], c2[1]], linestyle="--", color="xkcd:kelly green"
-        )
-
     ## Compute the tangent vectors on the circles
     t1 = casadi.substitute(tan_1, casadi.vertcat(*[u1]), [u1_opt])
     t1 /= casadi.norm_2(t1)
@@ -373,7 +227,7 @@ def get_tangents(
     diff = float(casadi.norm_2(tangent_2 - t1) + casadi.norm_2(tangent_2 - t2))
 
     if np.isclose(diff, 0):
-        u = np.arange(0, u1_opt, 0.001)
+        u = np.arange(0, u1_opt, resolution_meters)
         output["C1"] = [
             casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [ui]) for ui in u
         ]
@@ -381,25 +235,10 @@ def get_tangents(
             casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [u1_opt]),
             casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [u2_opt]),
         ]
-        u = np.arange(u2_opt, 1, 0.001)
+        u = np.arange(u2_opt, 1, resolution_meters)
         output["C2"] = [
             casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [ui]) for ui in u
         ]
-
-    if plot:
-        ## Plot the tangent vectors on the circles that are parallel to the second tangent
-        ax.plot(
-            [c1[0], c1[0] + radius_1 * t1[0]],
-            [c1[1], c1[1] + radius_1 * t1[1]],
-            linestyle="-",
-            color="xkcd:bright purple",
-        )
-        ax.plot(
-            [c2[0], c2[0] + radius_2 * t2[0]],
-            [c2[1], c2[1] + radius_2 * t2[1]],
-            linestyle="-",
-            color="xkcd:bright purple",
-        )
 
     ##########################################################
     # Computing inner tangents
@@ -407,8 +246,6 @@ def get_tangents(
     xp = (center_1[0] * radius_1 + center_2[0] * radius_2) / (radius_1 + radius_2)
     yp = (center_1[1] * radius_1 + center_2[1] * radius_2) / (radius_1 + radius_2)
 
-    if plot:
-        ax.plot([xp], [yp], ".r", markersize=10)
     # Third and fourth tangents
     xt1 = (
         radius_1**2 * (xp - center_1[0])
@@ -436,10 +273,6 @@ def get_tangents(
         * np.sqrt((xp - center_1[0]) ** 2 + (yp - center_1[1]) ** 2 - radius_1**2)
     ) / ((xp - center_1[0]) ** 2 + (yp - center_1[1]) ** 2) + center_1[1]
 
-    if plot:
-        ## Plotting the tangent points on the first circle
-        ax.plot([xt1, xt2], [yt1, yt2], ".r", markersize=10)
-
     xt3 = (
         radius_2**2 * (xp - center_2[0])
         + radius_2
@@ -466,10 +299,6 @@ def get_tangents(
         * np.sqrt((xp - center_2[0]) ** 2 + (yp - center_2[1]) ** 2 - radius_2**2)
     ) / ((xp - center_2[0]) ** 2 + (yp - center_2[1]) ** 2) + center_2[1]
 
-    if plot:
-        ## Plotting the tangent points on the second circle
-        ax.plot([xt3, xt4], [yt3, yt4], ".r", markersize=10)
-
     # Third tangent
     u1_opt = u1_func(np.arctan2(yt1 - center_1[1], xt1 - center_1[0]))
     if u1_opt < 0:
@@ -486,33 +315,13 @@ def get_tangents(
     t2 = casadi.substitute(tan_2, casadi.vertcat(*[u2]), [u2_opt])
     t2 /= casadi.norm_2(t2)
 
-    if plot:
-        ## Plot the tangent vectors on the circles that are parallel to the third tangent
-        # Convert to numpy arrays for plotting
-        c1 = np.array(casadi.DM(c1)).flatten()
-        c2 = np.array(casadi.DM(c2)).flatten()
-        t1 = np.array(casadi.DM(t1)).flatten()
-        t2 = np.array(casadi.DM(t2)).flatten()
-        ax.plot(
-            [c1[0], c1[0] + radius_1 * t1[0]],
-            [c1[1], c1[1] + radius_1 * t1[1]],
-            linestyle="-",
-            color="xkcd:bright purple",
-        )
-        ax.plot(
-            [c2[0], c2[0] + radius_2 * t2[0]],
-            [c2[1], c2[1] + radius_2 * t2[1]],
-            linestyle="-",
-            color="xkcd:bright purple",
-        )
-
     tangent_3 = np.array([xt3 - xt1, yt3 - yt1])
     tangent_3 /= np.linalg.norm(tangent_3)
 
     diff = float(casadi.norm_2(tangent_3 - t1) + casadi.norm_2(tangent_3 - t2))
 
     if np.isclose(diff, 0):
-        u = np.arange(0, u1_opt, 0.001)
+        u = np.arange(0, u1_opt, resolution_meters)
         output["C1"] = [
             casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [ui]) for ui in u
         ]
@@ -520,7 +329,7 @@ def get_tangents(
             casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [u1_opt]),
             casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [u2_opt]),
         ]
-        u = np.arange(u2_opt, 1, 0.001)
+        u = np.arange(u2_opt, 1, resolution_meters)
         output["C2"] = [
             casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [ui]) for ui in u
         ]
@@ -541,33 +350,13 @@ def get_tangents(
     t2 = casadi.substitute(tan_2, casadi.vertcat(*[u2]), [u2_opt])
     t2 /= casadi.norm_2(t2)
 
-    if plot:
-        ## Plot the tangent vectors on the circles that are parallel to the fourth tangent
-        # Convert to numpy arrays for plotting
-        c1 = np.array(casadi.DM(c1)).flatten()
-        c2 = np.array(casadi.DM(c2)).flatten()
-        t1 = np.array(casadi.DM(t1)).flatten()
-        t2 = np.array(casadi.DM(t2)).flatten()
-        ax.plot(
-            [c1[0], c1[0] + radius_1 * t1[0]],
-            [c1[1], c1[1] + radius_1 * t1[1]],
-            linestyle="-",
-            color="xkcd:bright purple",
-        )
-        ax.plot(
-            [c2[0], c2[0] + radius_2 * t2[0]],
-            [c2[1], c2[1] + radius_2 * t2[1]],
-            linestyle="-",
-            color="xkcd:bright purple",
-        )
-
     tangent_4 = np.array([xt4 - xt2, yt4 - yt2])
     tangent_4 /= np.linalg.norm(tangent_4)
 
     diff = float(casadi.norm_2(tangent_4 - t1) + casadi.norm_2(tangent_4 - t2))
 
     if np.isclose(diff, 0):
-        u = np.arange(0, u1_opt, 0.001)
+        u = np.arange(0, u1_opt, resolution_meters)
         output["C1"] = [
             casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [ui]) for ui in u
         ]
@@ -575,46 +364,15 @@ def get_tangents(
             casadi.substitute(circle_1_func, casadi.vertcat(*[u1]), [u1_opt]),
             casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [u2_opt]),
         ]
-        u = np.arange(u2_opt, 1, 0.001)
+        u = np.arange(u2_opt, 1, resolution_meters)
         output["C2"] = [
             casadi.substitute(circle_2_func, casadi.vertcat(*[u2]), [ui]) for ui in u
         ]
 
-    if plot:
-        ax.plot([xt1, xt3], [yt1, yt3], "--c")
-        ax.plot([xt2, xt4], [yt2, yt4], "--c")
-
-        #########################################################
-        # Plot the path
-        # Convert to numpy arrays for plotting
-        output["C1"] = [np.array(casadi.DM(c)).flatten() for c in output["C1"]]
-        output["S"] = [np.array(casadi.DM(c)).flatten() for c in output["S"]]
-        output["C2"] = [np.array(casadi.DM(c)).flatten() for c in output["C2"]]
-        if len(output["C1"]) == 0 or len(output["C2"]) == 0:
-            raise ValueError("No valid path found. Check the tangent calculations.")
-        ax.plot(
-            [x[0] for x in output["C1"]],
-            [x[1] for x in output["C1"]],
-            color="xkcd:golden yellow",
-            linewidth=3,
-        )
-        ax.plot(
-            [x[0] for x in output["S"]],
-            [x[1] for x in output["S"]],
-            color="xkcd:vermillion",
-            linewidth=3,
-        )
-        ax.plot(
-            [x[0] for x in output["C2"]],
-            [x[1] for x in output["C2"]],
-            color="xkcd:bright magenta",
-            linewidth=3,
-        )
-
     return output
 
 
-def get_path_length(path):
+def getPathLength(path):
     """Calculate the total length of the path"""
 
     length = 0.0
@@ -636,52 +394,6 @@ def get_path_length(path):
             length += np.linalg.norm(np.array(p2) - np.array(p1))
 
     return length
-
-
-def plotPath(path, title="Dubins Path"):
-    # Convert from Casadi to numpy
-    # Note: Casadi returns a DM object, which we need to convert to numpy arrays
-
-    for key in path:
-        if isinstance(path[key], list):
-            path[key] = [np.array(casadi.DM(c)).flatten() for c in path[key]]
-        else:
-            path[key] = np.array(casadi.DM(path[key])).flatten()
-
-    C1 = np.asarray(path["C1"])
-    S = np.asarray(path["S"])
-    C2 = np.asarray(path["C2"])
-
-    print(C1)
-    print(S)
-    print(C2)
-
-    if len(C1) > 0:
-        plt.plot(
-            C1[:, 0], C1[:, 1], label="C1", color="xkcd:golden yellow", linewidth=3
-        )
-
-    if len(S) > 0:
-        plt.plot(S[:, 0], S[:, 1], label="S", color="xkcd:vermillion", linewidth=3)
-
-    if len(C2) > 0:
-        plt.plot(
-            C2[:, 0], C2[:, 1], label="C2", color="xkcd:bright magenta", linewidth=3
-        )
-
-    plt.legend()
-    plt.title(title)
-    # Configure matplotlib to use a square aspect ratio
-    plt.gca().set_aspect("equal", adjustable="box")
-
-    plt.show()
-
-
-class Pose:
-    def __init__(self, pos_x, pos_y, yaw):
-        self.pos_x = pos_x
-        self.pos_y = pos_y
-        self.yaw = yaw
 
 
 def pathIsValid(path):
@@ -726,88 +438,112 @@ def trimPath(path, goal_x, goal_y, distance_threshold=0.1):
     return np.asarray(trimmed_path)
 
 
-def getShortestDubbinsPath(radius, start_x, start_y, start_yaw, end_x, end_y, end_yaw):
+def getShortestDubbinsPath(
+    radius, start_x, start_y, start_yaw, end_x, end_y, end_yaw, resolution_meters
+):
 
-    start_center = getCenter([start_x, start_y], radius, start_yaw)
-    end_center = getCenter([end_x, end_y], radius, end_yaw)
+    start = time.time()
 
-    # Print center1 contents
-    print("Center 1:")
-    print(f"  R: {start_center['R']}")
-    print(f"  L: {start_center['L']}")
-
+    start_center = getArcCenters([start_x, start_y], radius, start_yaw)
+    end_center = getArcCenters([end_x, end_y], radius, end_yaw)
     min_length = float("inf")
     shortest_path = None
 
     # RSR
     u1 = casadi.SX.sym("u1")
     u2 = casadi.SX.sym("u2")
-    path_rsr = get_tangents(
-        start_center["R"], radius, start_yaw, -1, end_center["R"], radius, heading_2, -1
+    path_rsr = getTangents(
+        start_center["R"],
+        radius,
+        start_yaw,
+        -1,
+        end_center["R"],
+        radius,
+        end_yaw,
+        -1,
+        resolution_meters=resolution_meters,
     )
-    length = get_path_length(path_rsr)
-    print(f"RSR Length: {length:.2f} units")
-    # plotPath(path_rsr, f"RSR Length: {length:.2f} units")
+    length = getPathLength(path_rsr)
 
     if length < min_length and pathIsValid(path_rsr):
         min_length = length
         shortest_path = path_rsr
-        print("Shortest path so far is RSR")
 
     # LSR
     u1 = casadi.SX.sym("u1")
     u2 = casadi.SX.sym("u2")
-    path_lsr = get_tangents(
-        start_center["L"], radius, start_yaw, 1, end_center["R"], radius, heading_2, -1
+    path_lsr = getTangents(
+        start_center["L"],
+        radius,
+        start_yaw,
+        1,
+        end_center["R"],
+        radius,
+        end_yaw,
+        -1,
+        resolution_meters=resolution_meters,
     )
-    length = get_path_length(path_lsr)
-    print(f"LSR Length: {length:.2f} units")
-    # plotPath(path_lsr, f"LSR Length: {length:.2f} units")
+    length = getPathLength(path_lsr)
 
     if length < min_length and pathIsValid(path_lsr):
         min_length = length
         shortest_path = path_lsr
-        print("Shortest path so far is LSR")
 
     # RSL
     u1 = casadi.SX.sym("u1")
     u2 = casadi.SX.sym("u2")
-    path_rsl = get_tangents(
-        start_center["R"], radius, start_yaw, -1, end_center["L"], radius, heading_2, 1
+    path_rsl = getTangents(
+        start_center["R"],
+        radius,
+        start_yaw,
+        -1,
+        end_center["L"],
+        radius,
+        end_yaw,
+        1,
+        resolution_meters=resolution_meters,
     )
-    length = get_path_length(path_rsl)
-    print(f"RSL Length: {length:.2f} units")
-    # plotPath(path_rsl, f"RSL Length: {length:.2f} units")
+    length = getPathLength(path_rsl)
 
     if length < min_length and pathIsValid(path_rsl):
         min_length = length
         shortest_path = path_rsl
-        print("Shortest path so far is RSL")
 
     # LSL
     u1 = casadi.SX.sym("u1")
     u2 = casadi.SX.sym("u2")
-    path_lsl = get_tangents(
-        start_center["L"], radius, start_yaw, 1, end_center["L"], radius, heading_2, 1
+    path_lsl = getTangents(
+        start_center["L"],
+        radius,
+        start_yaw,
+        1,
+        end_center["L"],
+        radius,
+        end_yaw,
+        1,
+        resolution_meters=resolution_meters,
     )
-    length = get_path_length(path_lsl)
-    print(f"LSL Length: {length:.2f} units")
-    # plotPath(path_lsl, f"LSL Length: {length:.2f} units")
+    length = getPathLength(path_lsl)
 
     if length < min_length and pathIsValid(path_lsl):
         min_length = length
         shortest_path = path_lsl
-        print("Shortest path so far is LSL")
+
+    print(f"Found shortest path in {time.time() - start:.4f} seconds")
 
     return shortest_path, min_length
 
 
 shortest_path, min_length = getShortestDubbinsPath(
-    radius=1, start_x=0, start_y=0, start_yaw=0, end_x=-5, end_y=-10, end_yaw=np.pi
+    radius=1,
+    start_x=0,
+    start_y=0,
+    start_yaw=0,
+    end_x=-5,
+    end_y=10,
+    end_yaw=-np.pi / 2,
+    resolution_meters=0.1,
 )
-
-print(f"Minimum Length: {min_length:.2f} units")
-# plotPath(shortest_path)
 
 final_path = trimPath(shortest_path, goal_x=-5, goal_y=-10, distance_threshold=0.1)
 
@@ -820,4 +556,7 @@ plt.plot(
     color="xkcd:orange",
     linewidth=3,
 )
+plt.gca().set_aspect("equal", adjustable="box")
 plt.show()
+
+print(len(final_path))

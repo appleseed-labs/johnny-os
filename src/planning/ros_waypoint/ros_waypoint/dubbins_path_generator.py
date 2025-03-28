@@ -41,6 +41,13 @@ center_2 = dict(
 )
 
 
+def getCenter(wp, radius, heading):
+    frame = get_frame(heading)
+    return dict(
+        R=wp - radius * frame[:, 1].flatten(), L=wp + radius * frame[:, 1].flatten()
+    )
+
+
 def plot_base():
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111)
@@ -82,12 +89,9 @@ def plot_base():
     return ax
 
 
-plot_base()
+# plot_base()
 
-print("RSR")
-
-u1 = casadi.SX.sym("u1")
-u2 = casadi.SX.sym("u2")
+# print("RSR")
 
 
 def get_tangents(
@@ -101,7 +105,63 @@ def get_tangents(
     delta_2,
     plot=False,
 ):
+    """
+    Compute the tangents between two circles and optionally plot the results.
+    This function calculates the tangents between two circles defined by their
+    centers, radii, headings, and deltas. It also provides an option to visualize
+    the tangents, circles, and other relevant geometric elements.
+    Parameters:
+    ----------
+    center_1 : array-like
+        Coordinates of the center of the first circle [x, y].
+    radius_1 : float
+        Radius of the first circle.
+    heading_1 : float
+        Heading angle of the first circle in radians.
+    delta_1 : float
+        Direction multiplier for the first circle (+1 for counterclockwise, -1 for clockwise).
+    center_2 : array-like
+        Coordinates of the center of the second circle [x, y].
+    radius_2 : float
+        Radius of the second circle.
+    heading_2 : float
+        Heading angle of the second circle in radians.
+    delta_2 : float
+        Direction multiplier for the second circle (+1 for counterclockwise, -1 for clockwise).
+    plot : bool, optional
+        If True, plots the circles, tangents, and other geometric elements (default is False).
+    Returns:
+    -------
+    output : dict
+        A dictionary containing the following keys:
+        - "C1": List of points along the first circle up to the tangent point.
+        - "S": List of points representing the straight-line segment between the tangent points.
+        - "C2": List of points along the second circle from the tangent point onward.
+    Raises:
+    ------
+    ValueError
+        If no valid path is found due to incorrect tangent calculations.
+    Notes:
+    ------
+    - The function uses CasADi for symbolic computation and NumPy for numerical operations.
+    - The plotting functionality requires a compatible plotting library (e.g., Matplotlib).
+    Example:
+    -------
+    >>> center_1 = [0, 0]
+    >>> radius_1 = 5
+    >>> heading_1 = 0
+    >>> delta_1 = 1
+    >>> center_2 = [10, 0]
+    >>> radius_2 = 5
+    >>> heading_2 = 0
+    >>> delta_2 = -1
+    >>> result = get_tangents(center_1, radius_1, heading_1, delta_1, center_2, radius_2, heading_2, delta_2, plot=True)
+    """
+
     output = dict()
+
+    u1 = casadi.SX.sym("u1")
+    u2 = casadi.SX.sym("u2")
 
     phi_1 = 2 * np.pi * u1 * delta_1 + heading_1 - delta_1 * np.pi / 2
     phi_2 = 2 * np.pi * u2 * delta_2 + heading_2 - delta_2 * np.pi / 2
@@ -592,9 +652,23 @@ def plotPath(path, title="Dubins Path"):
     S = np.asarray(path["S"])
     C2 = np.asarray(path["C2"])
 
-    plt.plot(C1[:, 0], C1[:, 1], label="C1", color="xkcd:golden yellow", linewidth=3)
-    plt.plot(S[:, 0], S[:, 1], label="S", color="xkcd:vermillion", linewidth=3)
-    plt.plot(C2[:, 0], C2[:, 1], label="C2", color="xkcd:bright magenta", linewidth=3)
+    print(C1)
+    print(S)
+    print(C2)
+
+    if len(C1) > 0:
+        plt.plot(
+            C1[:, 0], C1[:, 1], label="C1", color="xkcd:golden yellow", linewidth=3
+        )
+
+    if len(S) > 0:
+        plt.plot(S[:, 0], S[:, 1], label="S", color="xkcd:vermillion", linewidth=3)
+
+    if len(C2) > 0:
+        plt.plot(
+            C2[:, 0], C2[:, 1], label="C2", color="xkcd:bright magenta", linewidth=3
+        )
+
     plt.legend()
     plt.title(title)
     # Configure matplotlib to use a square aspect ratio
@@ -603,42 +677,147 @@ def plotPath(path, title="Dubins Path"):
     plt.show()
 
 
-# RSR
-u1 = casadi.SX.sym("u1")
-u2 = casadi.SX.sym("u2")
-path_rsr = get_tangents(
-    center_1["R"], radius, heading_1, -1, center_2["R"], radius, heading_2, -1
-)
-length = get_path_length(path_rsr)
-print(f"RSR Length: {length:.2f} units")
-plotPath(path_rsr, f"RSR Length: {length:.2f} units")
+class Pose:
+    def __init__(self, pos_x, pos_y, yaw):
+        self.pos_x = pos_x
+        self.pos_y = pos_y
+        self.yaw = yaw
 
-# LSR
-u1 = casadi.SX.sym("u1")
-u2 = casadi.SX.sym("u2")
-path_lsr = get_tangents(
-    center_1["L"], radius, heading_1, 1, center_2["R"], radius, heading_2, -1
-)
-length = get_path_length(path_lsr)
-print(f"LSR Length: {length:.2f} units")
-plotPath(path_lsr, f"LSR Length: {length:.2f} units")
 
-# RSL
-u1 = casadi.SX.sym("u1")
-u2 = casadi.SX.sym("u2")
-path_rsl = get_tangents(
-    center_1["R"], radius, heading_1, -1, center_2["L"], radius, heading_2, 1
-)
-length = get_path_length(path_rsl)
-print(f"RSL Length: {length:.2f} units")
-plotPath(path_rsl, f"RSL Length: {length:.2f} units")
+def pathIsValid(path):
+    """
+    Check if the path is valid.
+    A path is considered valid if it has at least one segment in C1, S, and C2.
+    """
+    if "C1" not in path or "S" not in path or "C2" not in path:
+        return False
 
-# LSL
-u1 = casadi.SX.sym("u1")
-u2 = casadi.SX.sym("u2")
-path_lsl = get_tangents(
-    center_1["L"], radius, heading_1, 1, center_2["L"], radius, heading_2, 1
+    if len(path["C1"]) == 0 or len(path["S"]) == 0 or len(path["C2"]) == 0:
+        return False
+
+    return True
+
+
+def trimPath(path, goal_x, goal_y, distance_threshold=0.1):
+    # Combine all points from C1, S, C2 into a single list
+    full_path = []
+    assert "C1" in path, "Paths must contain C1"
+    assert "S" in path, "Paths must contain S"
+    assert "C2" in path, "Paths must contain C2"
+
+    full_path.extend(path["C1"])
+    full_path.extend(path["S"])
+    full_path.extend(path["C2"])
+
+    full_length = len(full_path)
+
+    # Now trim any parts that extend beyond the goal point
+    trimmed_path = []
+    for idx, point in enumerate(full_path):
+        trimmed_path.append(point)
+        # Check if the point is close to the goal
+        if (
+            np.linalg.norm(np.array(point) - np.array([goal_x, goal_y]))
+            < distance_threshold
+        ):
+            print(f"Stopping at index {idx}/{full_length}")
+            break
+
+    return np.asarray(trimmed_path)
+
+
+def getShortestDubbinsPath(radius, start_x, start_y, start_yaw, end_x, end_y, end_yaw):
+
+    start_center = getCenter([start_x, start_y], radius, start_yaw)
+    end_center = getCenter([end_x, end_y], radius, end_yaw)
+
+    # Print center1 contents
+    print("Center 1:")
+    print(f"  R: {start_center['R']}")
+    print(f"  L: {start_center['L']}")
+
+    min_length = float("inf")
+    shortest_path = None
+
+    # RSR
+    u1 = casadi.SX.sym("u1")
+    u2 = casadi.SX.sym("u2")
+    path_rsr = get_tangents(
+        start_center["R"], radius, start_yaw, -1, end_center["R"], radius, heading_2, -1
+    )
+    length = get_path_length(path_rsr)
+    print(f"RSR Length: {length:.2f} units")
+    # plotPath(path_rsr, f"RSR Length: {length:.2f} units")
+
+    if length < min_length and pathIsValid(path_rsr):
+        min_length = length
+        shortest_path = path_rsr
+        print("Shortest path so far is RSR")
+
+    # LSR
+    u1 = casadi.SX.sym("u1")
+    u2 = casadi.SX.sym("u2")
+    path_lsr = get_tangents(
+        start_center["L"], radius, start_yaw, 1, end_center["R"], radius, heading_2, -1
+    )
+    length = get_path_length(path_lsr)
+    print(f"LSR Length: {length:.2f} units")
+    # plotPath(path_lsr, f"LSR Length: {length:.2f} units")
+
+    if length < min_length and pathIsValid(path_lsr):
+        min_length = length
+        shortest_path = path_lsr
+        print("Shortest path so far is LSR")
+
+    # RSL
+    u1 = casadi.SX.sym("u1")
+    u2 = casadi.SX.sym("u2")
+    path_rsl = get_tangents(
+        start_center["R"], radius, start_yaw, -1, end_center["L"], radius, heading_2, 1
+    )
+    length = get_path_length(path_rsl)
+    print(f"RSL Length: {length:.2f} units")
+    # plotPath(path_rsl, f"RSL Length: {length:.2f} units")
+
+    if length < min_length and pathIsValid(path_rsl):
+        min_length = length
+        shortest_path = path_rsl
+        print("Shortest path so far is RSL")
+
+    # LSL
+    u1 = casadi.SX.sym("u1")
+    u2 = casadi.SX.sym("u2")
+    path_lsl = get_tangents(
+        start_center["L"], radius, start_yaw, 1, end_center["L"], radius, heading_2, 1
+    )
+    length = get_path_length(path_lsl)
+    print(f"LSL Length: {length:.2f} units")
+    # plotPath(path_lsl, f"LSL Length: {length:.2f} units")
+
+    if length < min_length and pathIsValid(path_lsl):
+        min_length = length
+        shortest_path = path_lsl
+        print("Shortest path so far is LSL")
+
+    return shortest_path, min_length
+
+
+shortest_path, min_length = getShortestDubbinsPath(
+    radius=1, start_x=0, start_y=0, start_yaw=0, end_x=-5, end_y=-10, end_yaw=np.pi
 )
-length = get_path_length(path_lsl)
-print(f"LSL Length: {length:.2f} units")
-plotPath(path_lsl, f"LSL Length: {length:.2f} units")
+
+print(f"Minimum Length: {min_length:.2f} units")
+# plotPath(shortest_path)
+
+final_path = trimPath(shortest_path, goal_x=-5, goal_y=-10, distance_threshold=0.1)
+
+print(final_path)
+
+plt.plot(
+    final_path[:, 0],
+    final_path[:, 1],
+    label="Trimmed Path",
+    color="xkcd:orange",
+    linewidth=3,
+)
+plt.show()

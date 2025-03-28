@@ -2,7 +2,3 @@
 	path = src/external/ros_tcp_endpoint
 	url = https://github.com/Unity-Technologies/ROS-TCP-Endpoint
 	branch = main-ros2
-[submodule "src/external/pymoveit2"]
-	path = src/external/pymoveit2
-	url = https://github.com/AndrejOrsula/pymoveit2
-	branch = master

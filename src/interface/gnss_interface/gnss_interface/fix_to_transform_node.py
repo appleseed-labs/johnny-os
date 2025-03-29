@@ -80,7 +80,13 @@ class FixToTransformNode(Node):
         t.child_frame_id = "base_link"
         t.transform.translation.x = x
         t.transform.translation.y = y
-        t.transform.translation.z = msg.altitude - self.origin_z
+
+        # NOTE: We assume that z is zero, which makes downstream algorithms much easier
+        # This is an okay assumption for a UGV when considering global features.
+        # We can leverage local height data when processing relative sensor data, e.g.
+        # lidar, camera, etc. WSH.
+        # t.transform.translation.z = msg.altitude - self.origin_z
+        t.transform.translation.z = 0.0
 
         # Set the orientation (yaw) from the IMU data
         if self.yaw_enu is not None:

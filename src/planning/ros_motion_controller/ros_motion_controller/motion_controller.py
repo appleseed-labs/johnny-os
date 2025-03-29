@@ -6,7 +6,8 @@
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist, PoseArray
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Path
 from sensor_msgs.msg import NavSatFix
 from sensor_msgs.msg import Imu
 from scipy.spatial.transform import Rotation as R
@@ -31,9 +32,7 @@ class MotionController(Node):
         )
 
         # Subscribers
-        self.waypoints_subscription = self.create_subscription(
-            PoseArray, "/waypoints", self.waypointsCb, 10
-        )
+        self.create_subscription(Path, "/planning/path", self.pathCb, 10)
 
         # For looking up the robot's position on the map
         self.tf_buffer = Buffer()
@@ -53,11 +52,12 @@ class MotionController(Node):
         # NOTE: This is for testing purposes
         self.controller_signal_publisher.publish(Bool(data=True))
 
-    def waypointsCb(self, msg: PoseArray):
+    def pathCb(self, msg: Path):
         """Callback to get waypoints from path planning"""
         poses = msg.poses
         # Get the needed x, y tuples for waypoints
-        for pose in poses:
+        for pose_stamped in poses:
+            pose = pose_stamped.pose
             loc_tuple = (pose.position.x, pose.position.y)
             self.waypoints.append(loc_tuple)
 

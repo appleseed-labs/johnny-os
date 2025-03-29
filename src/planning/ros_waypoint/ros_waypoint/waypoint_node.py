@@ -715,9 +715,9 @@ class WayPointController(Node):
                 waypoints
             )  # Re-add to the end of the queue. TODO: Remove this line.
 
-            pose_array = PoseArray()
-            pose_array.header.stamp = self.get_clock().now().to_msg()
-            pose_array.header.frame_id = "map"
+            path = Path()
+            path.header.stamp = self.get_clock().now().to_msg()
+            path.header.frame_id = "map"
 
             # Convert waypoints to Pose objects
             for x, y in waypoints:
@@ -726,10 +726,10 @@ class WayPointController(Node):
                 pose.position.x = float(x)
                 pose.position.y = float(y)
                 pose.position.z = 0.0  # Assume 2D navigation
-                pose_array.poses.append(pose)
+                path.poses.append(pose)
 
             # Publish the PoseArray
-            self.path_publisher.publish(pose_array)
+            self.path_publisher.publish(path)
             self.get_logger().info(f"Published {len(waypoints)} waypoints")
         else:
             self.get_logger().info("No more waypoint arrays to publish")

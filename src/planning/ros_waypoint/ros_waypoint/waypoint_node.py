@@ -582,6 +582,8 @@ class WayPointController(Node):
             ]
         )
 
+        self.latest_path = None
+
     def transformPose(self, pose_msg: PoseStamped, target_frame: str):
         """Transform a PoseStamped message to a target frame
         Args:
@@ -686,53 +688,33 @@ class WayPointController(Node):
             path_msg.poses.append(pose)
 
         self.path_publisher.publish(path_msg)
+
+        # Cache this for later
+        self.latest_path = path_msg
+
         self.get_logger().info(f"Published path with {len(final_path)} points")
 
     def mc_callback(self, msg):
         """Callback to check if the motion controller is ready for waypoints"""
         # self.mc_bool = msg.data
         self.get_logger().info("We trying to send the waypoints")
-        self.send_waypoint()
+        self.publishPath()
 
     def signal_callback(self, msg):
         """Get signal to send or not send waypoints"""
         pass
         if msg.data and self.mc_bool:
             # Send the waypoints
-            self.send_waypoint()
+            self.publishPath()
             self.mc_bool = False
 
-    def send_waypoint(self):
+    def publishPath(self):
         """Send waypoints to the motion controller"""
-        if self.waypoint_queue:
-            waypoints = self.waypoint_queue.popleft()  # FIFO order
 
-            next_waypoints = waypoints
-            next_waypoints[0][0] += random.random() * 5.0
-            next_waypoints[0][1] += random.random() * 5.0
-
-            self.waypoint_queue.append(
-                waypoints
-            )  # Re-add to the end of the queue. TODO: Remove this line.
-
-            path = Path()
-            path.header.stamp = self.get_clock().now().to_msg()
-            path.header.frame_id = "map"
-
-            # Convert waypoints to Pose objects
-            for x, y in waypoints:
-                pose = Pose()
-                self.get_logger().info(f"X: {x}, Y: {y}\n")
-                pose.position.x = float(x)
-                pose.position.y = float(y)
-                pose.position.z = 0.0  # Assume 2D navigation
-                path.poses.append(pose)
-
-            # Publish the PoseArray
-            self.path_publisher.publish(path)
-            self.get_logger().info(f"Published {len(waypoints)} waypoints")
-        else:
-            self.get_logger().info("No more waypoint arrays to publish")
+        if self.latest_path is None:
+            self.get_logger().warning("No path to publish")
+            return
+        self.path_publisher.publish(self.latest_path)
 
 
 def main(args=None):

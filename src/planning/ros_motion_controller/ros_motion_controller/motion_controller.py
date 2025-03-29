@@ -6,7 +6,7 @@
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Path
 from sensor_msgs.msg import NavSatFix
 from sensor_msgs.msg import Imu
@@ -17,6 +17,7 @@ import numpy as np
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
+from tf2_geometry_msgs import do_transform_pose
 
 
 class MotionController(Node):
@@ -47,16 +48,47 @@ class MotionController(Node):
         # Counter to help us track the amount of lookahead_points not found
         self.lookahead_not_found_counter = 0
         # Initilize timer for control loop
-        self.create_timer(0.1, self.spinController)
+        self.timer = self.create_timer(0.1, self.spinController)
 
         # NOTE: This is for testing purposes
         self.controller_signal_publisher.publish(Bool(data=True))
+
+    def transformPose(self, pose_msg: PoseStamped, target_frame: str):
+        """Transform a PoseStamped message to a target frame
+        Args:
+            pose_msg (PoseStamped): The pose to transform
+            target_frame (str): The target frame to transform to
+        Returns:
+            PoseStamped: The transformed pose
+        """
+        if pose_msg.header.frame_id == target_frame:
+            return pose_msg
+
+        try:
+            # Get the latest transform from map to base_link
+            t = self.tf_buffer.lookup_transform(
+                target_frame, pose_msg.header.frame_id, rclpy.time.Time()
+            )
+            # Make shallow copy of pose_msg
+            transformed_pose = PoseStamped()
+            transformed_pose.header.stamp = pose_msg.header.stamp
+            transformed_pose.header.frame_id = target_frame
+            transformed_pose.pose = do_transform_pose(pose_msg.pose, t)
+            return transformed_pose
+        except TransformException as ex:
+            self.get_logger().warning(f"Could not transform pose: {ex}")
+            return None
 
     def pathCb(self, msg: Path):
         """Callback to get waypoints from path planning"""
         poses = msg.poses
         # Get the needed x, y tuples for waypoints
         for pose_stamped in poses:
+            if pose_stamped.header.frame_id != "base_link":
+                # Transform the pose to the ego frame
+                pose_stamped = self.transformPose(pose_stamped, "base_link")
+                if pose_stamped is None:
+                    continue
             pose = pose_stamped.pose
             loc_tuple = (pose.position.x, pose.position.y)
             self.waypoints.append(loc_tuple)
@@ -69,7 +101,13 @@ class MotionController(Node):
         """
 
         if self.ego_x is None or self.ego_y is None:
+            self.get_logger().warning("No robot position data available.")
             return None
+
+        print(
+            f"Searching along the path for lookahead point with distance: {lookahead_distance}"
+        )
+        print(self.waypoints)
 
         for i in range(len(self.waypoints) - 1):
             p1 = np.array(self.waypoints[i])
@@ -90,8 +128,15 @@ class MotionController(Node):
             # Solve the quadratic equation: at^2 + bt + c = 0
             t = np.roots([a, b, c])
 
+            # Filter out complex roots and get only real values
+            t_real = t[np.isreal(t)].real
+
+            # If no real roots exist, continue to the next segment
+            if len(t_real) == 0:
+                continue
+
             # Choose the valid solution (if real and within the path segment)
-            t = np.max(t)  # We want the largest solution in case of two roots
+            t = np.max(t_real)  # We want the largest solution in case of two roots
 
             if 0 <= t <= 1:  # Ensure the solution is within the path segment [0, 1]
                 lookahead_point = p1 + t * path_vector  # Calculate the lookahead point

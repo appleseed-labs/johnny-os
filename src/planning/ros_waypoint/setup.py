@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = "xarm_control"
+package_name = "ros_waypoint"
 
 setup(
     name=package_name,
@@ -12,15 +12,12 @@ setup(
     ],
     install_requires=["setuptools"],
     zip_safe=True,
-    maintainer="main",
-    maintainer_email="will@heit.mn",
+    maintainer="rohan",
+    maintainer_email="waliaro24@gmail.com",
     description="TODO: Package description",
-    license="TODO: License declaration",
+    license="Apache-2.0",
     tests_require=["pytest"],
     entry_points={
-        "console_scripts": [
-            "pick_and_place_node = xarm_control.pick_and_place:main",
-            "xarm_control_node = xarm_control.xarm_control:main",
-        ],
+        "console_scripts": ["waypoint_node = ros_waypoint.waypoint_node:main"],
     },
 )

@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>gnss_interface</name>
+  <version>1.0.0</version>
+  <description>Nodes to parse serial data from a GNSS receiver</description>
+
+  <maintainer email="w@heit.mn">Will Heitman</maintainer>
+  <license>MIT</license>
+
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

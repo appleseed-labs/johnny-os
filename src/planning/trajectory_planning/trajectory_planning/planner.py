@@ -374,15 +374,14 @@ class PlannerNode(Node):
 
     def switchToPlantingMode(self):
         self.current_mode = Mode.STOPPED
+        if len(self.seedling_points) > 0:
+            self.seedling_points.pop(0)
         self.is_planting = True
         self.start_planting_pub.publish(Empty())
 
     def startDrivingCb(self, msg: Empty):
-        self.current_mode = Mode.AUTO
         self.is_planting = False
-
-        if len(self.seedling_points) > 0:
-            self.seedling_points.pop(0)
+        self.current_mode = Mode.AUTO
 
         # self.start_planting_pub.publish(Empty())
 

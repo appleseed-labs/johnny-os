@@ -11,6 +11,7 @@ import math
 from os import error
 from threading import Thread
 import time
+from turtle import pos
 
 import rclpy
 from rclpy.node import Node
@@ -48,7 +49,8 @@ ERROR_CODE_MAP = {
 
 HOME_Q = [0, 0, 0, 0, 0, 0]
 OVERHEAD_Q = [0, -56.1, -34.9, 0, 0, 0]
-READY_Q = [95.1, -40.6, -17.9, 34.2, -11.3, -23.5]
+READY_Q = [95.1, -55.4, -10.1, 33.7, -11.3, -118.1]
+SEEDLING_1_Q = [93.6, -33.9, -21.5, 33.7, -11.3, -118.1]
 
 
 # Create an enum for the pose FSM
@@ -57,6 +59,64 @@ class PoseState(Enum):
     OVERHEAD = 1
     READY = 2
     UNKNOWN = 3
+    SEEDLING = 4
+
+
+from collections import defaultdict
+
+
+# This class represents a directed graph
+# using adjacency list representation
+class Graph:
+
+    # Constructor
+    def __init__(self):
+
+        # Default dictionary to store graph
+        self.graph = defaultdict(list)
+
+    # Function to add an edge to graph
+    def addEdge(self, u, v):
+        self.graph[u].append(v)
+        self.graph[v].append(u)  # Add the reverse edge to make the graph undirected
+
+    # Function to print a BFS of graph
+    def BFS(self, start, end):
+        # Mark all the vertices as not visited
+        visited = {key: False for key in self.graph}
+
+        # Create a queue for BFS
+        queue = []
+
+        # Create a dictionary to store the path
+        parent = {key: None for key in self.graph}
+
+        # Mark the start node as visited and enqueue it
+        visited[start] = True
+        queue.append(start)
+
+        while queue:
+            # Dequeue a vertex from the queue
+            current = queue.pop(0)
+
+            # If the end node is reached, construct the path
+            if current == end:
+                path = []
+                while current is not None:
+                    path.append(current)
+                    current = parent[current]
+                return path[::-1]  # Reverse the path to get the correct order
+
+            # Get all adjacent vertices of the dequeued vertex
+            # If an adjacent has not been visited, mark it visited and enqueue it
+            for neighbor in self.graph[current]:
+                if not visited[neighbor]:
+                    visited[neighbor] = True
+                    parent[neighbor] = current
+                    queue.append(neighbor)
+
+        # If the end node is not reachable, return an empty list
+        return []
 
 
 class JointTrajectory:
@@ -97,6 +157,12 @@ class JointTrajectory:
             joint_state_msgs.append(msg)
 
         return joint_state_msgs
+
+
+class Pose:
+    def __init__(self, name: str, Q: list[float]):
+        self.name = name
+        self.Q = Q
 
 
 def getStraightLineTrajectoryInJointSpace(
@@ -143,7 +209,7 @@ class XarmControlNode(Node):
 
         self.declare_parameter(
             "planting_time_secs",
-            10.0,
+            6.0,
             ParameterDescriptor(
                 description="Total time it takes for the arm to plant a seedling, in seconds."
             ),
@@ -164,6 +230,19 @@ class XarmControlNode(Node):
         self.planting_stop_time = time.time()
         self.create_timer(0.1, self.checkIfPlantingComplete)
 
+        # Create a graph given in
+        # the above diagram
+        self.g = Graph()
+
+        self.home_pose = Pose("home", HOME_Q)
+        self.overhead_pose = Pose("overhead", OVERHEAD_Q)
+        self.ready_pose = Pose("ready", READY_Q)
+        self.seedling_pose = Pose("seedling", SEEDLING_1_Q)
+
+        self.g.addEdge(self.home_pose, self.overhead_pose)
+        self.g.addEdge(self.overhead_pose, self.ready_pose)
+        self.g.addEdge(self.ready_pose, self.seedling_pose)
+
         if self.sim_only:
             self.get_logger().info("Sim only mode enabled. Skipping xArm setup.")
             return
@@ -178,7 +257,7 @@ class XarmControlNode(Node):
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
 
-        self.max_angular_speed = 80
+        self.max_angular_speed = 60
 
         code, current_joint_angles = self.arm.get_servo_angle()
 
@@ -194,24 +273,62 @@ class XarmControlNode(Node):
         if np.allclose(current_joint_angles, HOME_Q, atol=0.1):
             self.get_logger().info("Already at home")
             self.fsm_state = PoseState.HOME
+            self.current_pose = self.home_pose
 
         elif np.allclose(current_joint_angles, OVERHEAD_Q, atol=0.1):
             self.get_logger().info("Starting at overhead")
             self.fsm_state = PoseState.OVERHEAD
-            self.goHome(speed=self.max_angular_speed)
+            self.current_pose = self.overhead_pose
+            self.goReady(speed=self.max_angular_speed)
 
         elif np.allclose(current_joint_angles, READY_Q, atol=0.1):
             self.get_logger().info("Starting at ready")
             self.fsm_state = PoseState.READY
-            self.goHome(speed=self.max_angular_speed)
+            self.current_pose = self.ready_pose
+            self.goReady(speed=self.max_angular_speed)
+
+        # TODO: CHECK FOR ALL SEEDLING POSITIONS
+        elif np.allclose(current_joint_angles, SEEDLING_1_Q, atol=0.1):
+            self.get_logger().info("Starting at seedling")
+            self.fsm_state = PoseState.SEEDLING
+            self.current_pose = self.seedling_pose
+            self.goReady(speed=self.max_angular_speed)
 
         else:
             self.get_logger().error("Starting at unknown position")
             self.fsm_state = PoseState.UNKNOWN
-            self.goHome(speed=self.max_angular_speed, force=True)
+            self.current_pose = None
+            self.goReady(speed=self.max_angular_speed, force=True)
 
-        # self.goOverhead(speed=speed)
-        # self.goReady()
+        # self.moveToPose(self.home_pose, speed=self.max_angular_speed)
+        # self.moveToPose(self.seedling_pose, speed=self.max_angular_speed)
+        # self.moveToPose(self.home_pose, speed=self.max_angular_speed)
+
+    def moveToPose(self, target_pose: Pose, speed=None):
+        if self.sim_only:
+            return
+
+        if speed is None:
+            speed = self.max_angular_speed
+
+        print(f"Moving from {self.current_pose.name} to {target_pose.name}")
+        # Print the dict of the graph, formatted from a defaultdict
+        print("Graph dict:")
+        for key, value in self.g.graph.items():
+            print(f"{key.name}: {[v.name for v in value]}")
+        poses = self.g.BFS(self.current_pose, target_pose)
+        print([pose.name for pose in poses])
+
+        if len(poses) == 0:
+            self.get_logger().error("No path found")
+            return
+        for i in range(len(poses) - 1):
+            start = poses[i]
+            end = poses[i + 1]
+            print(f"Moving from {start.name} to {end.name}")
+            self.arm.set_servo_angle(angle=end.Q, speed=speed, wait=True)
+
+        self.current_pose = target_pose
 
     def checkIfPlantingComplete(self):
         if self.is_planting and time.time() > self.planting_stop_time:
@@ -229,18 +346,25 @@ class XarmControlNode(Node):
         self.get_logger().info("Received start planting signal")
         self.is_planting = True
         self.planting_stop_time = time.time() + self.planting_time_secs
-        self.goReady()
-        self.goHome()
+        self.moveToPose(self.seedling_pose, speed=self.max_angular_speed)
+        time.sleep(1.0)
+        self.moveToPose(self.overhead_pose, speed=self.max_angular_speed)
 
     def setJointPosition(self, q: list[float], speed=25) -> int:
         self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
 
-    def goHome(self, speed=None, force=True):
+    def goHome(self, speed=None, force=False):
         if self.sim_only:
             return
 
+        print("GO HOME")
+
         if speed is None:
             speed = self.max_angular_speed
+
+        if self.fsm_state == PoseState.SEEDLING:
+            self.get_logger().info("Going to ready from seedling")
+            self.goReady()
 
         if self.fsm_state == PoseState.READY:
             self.get_logger().info("Going to overhead from ready")
@@ -274,7 +398,10 @@ class XarmControlNode(Node):
         if speed is None:
             speed = self.max_angular_speed
 
-        if self.fsm_state == PoseState.READY:
+        if self.fsm_state == PoseState.SEEDLING:
+            self.goReady(speed=speed)
+
+        elif self.fsm_state == PoseState.READY:
             self.get_logger().info("Going to overhead from ready")
             self.arm.set_servo_angle(angle=OVERHEAD_Q, speed=speed, wait=True)
             self.get_logger().info("Now at overhead position")
@@ -299,6 +426,13 @@ class XarmControlNode(Node):
         if speed is None:
             speed = self.max_angular_speed
 
+        if self.fsm_state == PoseState.SEEDLING:
+            self.get_logger().info("Going to ready from seedling")
+            self.arm.set_servo_angle(angle=READY_Q, speed=speed, wait=True)
+            self.get_logger().info("Now at ready position")
+            self.fsm_state = PoseState.READY
+            return
+
         if self.fsm_state == PoseState.OVERHEAD:
             self.get_logger().info("Going to ready from overhead")
             self.arm.set_servo_angle(angle=READY_Q, speed=speed, wait=True)
@@ -319,6 +453,20 @@ class XarmControlNode(Node):
         else:
             self.get_logger().error(f"Unsupported state {self.fsm_state}")
             return
+
+    def goToFirstSeedling(self, speed=None):
+        if self.sim_only:
+            return
+
+        if self.fsm_state == PoseState.READY:
+            self.arm.set_servo_angle(angle=SEEDLING_1_Q, speed=speed, wait=True)
+
+        else:
+            self.goReady(speed=speed)
+            self.goToFirstSeedling(speed=speed)
+
+        self.get_logger().info("Now at seedling position")
+        self.fsm_state = PoseState.SEEDLING
 
     def handleCode(self, code: int):
         """

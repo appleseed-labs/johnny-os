@@ -41,8 +41,12 @@ class FixToTransformNode(Node):
 
         # Calculate our map origin
         lat0, lon0, alt0 = self.get_parameter("map_origin_lat_lon_alt_degrees").value
-        self.origin_utm_x, self.origin_utm_y, _, __ = utm.from_latlon(lat0, lon0)
+        # self.origin_utm_x, self.origin_utm_y, _, __ = utm.from_latlon(lat0, lon0)
         self.origin_z = alt0
+
+        # NOTE: Rohan fix
+        self.origin_utm_x = None
+        self.origin_utm_y = None
 
     def imuCb(self, msg: Imu):
         # Check for valid quaternion
@@ -69,7 +73,12 @@ class FixToTransformNode(Node):
     def fixCb(self, msg: NavSatFix):
         # Convert to UTM
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
-
+        # NOTE: Rohan fix
+        if self.origin_utm_x is None and self.origin_utm_y is None:
+            self.origin_utm_x = utm_x
+            self.origin_utm_y = utm_y
+            self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
+            self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
         # Calculate the position relative to the origin
         x = utm_x - self.origin_utm_x
         y = utm_y - self.origin_utm_y

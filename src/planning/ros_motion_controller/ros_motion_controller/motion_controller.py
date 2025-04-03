@@ -44,6 +44,7 @@ class MotionController(Node):
         # Current pose (initialize to None until received)
         self.ego_x = None
         self.ego_y = None
+        self.ego_yaw = None
 
         # Counter to help us track the amount of lookahead_points not found
         self.lookahead_not_found_counter = 0
@@ -92,6 +93,8 @@ class MotionController(Node):
             pose = pose_stamped.pose
             loc_tuple = (pose.position.x, pose.position.y)
             self.waypoints.append(loc_tuple)
+
+        self.get_logger().info(f"Got waypoints: {self.waypoints}")
 
     def findLookaheadPoint(self, lookahead_distance):
         """Find a point on the path at lookahead distance ahead of the robot.
@@ -166,7 +169,7 @@ class MotionController(Node):
             robot_heading
         )  # The slope of the line at the current robot orientation
         b = 1  # The coefficient for the y-axis in the line equation
-        c = x_pos * np.tan(self.imu_reading) - y_pos  # The line offset
+        c = x_pos * np.tan(self.ego_yaw) - y_pos  # The line offset
 
         # Distance (N) from the robot's current position to the closest point on the path
         N = abs(a * lookahead_x + b * lookahead_y + c) / np.sqrt(

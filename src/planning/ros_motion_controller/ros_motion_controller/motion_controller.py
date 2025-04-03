@@ -93,8 +93,9 @@ class MotionController(Node):
             pose = pose_stamped.pose
             loc_tuple = (pose.position.x, pose.position.y)
             self.waypoints.append(loc_tuple)
-
-        self.get_logger().info(f"Got waypoints: {self.waypoints}")
+        # Create timer to start the control loop again
+        self.timer = self.create_timer(0.1, self.spinController)
+        # self.get_logger().info(f"Got waypoints: {self.waypoints}")
 
     def findLookaheadPoint(self, lookahead_distance):
         """Find a point on the path at lookahead distance ahead of the robot.
@@ -169,7 +170,7 @@ class MotionController(Node):
             robot_heading
         )  # The slope of the line at the current robot orientation
         b = 1  # The coefficient for the y-axis in the line equation
-        c = x_pos * np.tan(self.ego_yaw) - y_pos  # The line offset
+        c = x_pos * np.tan(robot_heading) - y_pos  # The line offset
 
         # Distance (N) from the robot's current position to the closest point on the path
         N = abs(a * lookahead_x + b * lookahead_y + c) / np.sqrt(
@@ -222,7 +223,7 @@ class MotionController(Node):
         # Compute curvature
         loc_cur = np.array([self.ego_x, self.ego_y])
         curvature = self.findCurvature(
-            lookahead_point, self.imu_reading, loc_cur, adaptive_lookahead
+            lookahead_point, self.ego_yaw, loc_cur, adaptive_lookahead
         )
         angular_speed = math.atan(curvature)
 
@@ -278,6 +279,12 @@ class MotionController(Node):
 
     def spinController(self):
         """Compute and publish velocity commands using Pure Pursuit."""
+        # No waypoints recieved
+        if len(self.waypoints) == 0:
+            self.get_logger().warning(
+                "No waypoints received yet. Skipping control loop."
+            )
+            return
 
         try:
             # Get the latest transform from map to base_link
@@ -296,12 +303,6 @@ class MotionController(Node):
         except TransformException as ex:
             self.get_logger().warning(
                 f"Could not find ego transform. Skipping control loop: {ex}"
-            )
-            return
-
-        if len(self.waypoints) == 0:
-            self.get_logger().warning(
-                "No waypoints received yet. Skipping control loop."
             )
             return
 

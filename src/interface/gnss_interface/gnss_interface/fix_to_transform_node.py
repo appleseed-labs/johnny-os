@@ -16,7 +16,7 @@ import utm
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import NavSatFix, Imu
-from std_msgs.msg import Header
+from std_msgs.msg import Header, Bool
 
 
 class FixToTransformNode(Node):
@@ -31,6 +31,9 @@ class FixToTransformNode(Node):
 
         self.create_subscription(NavSatFix, "/gnss/fix", self.fixCb, 1)  # For position
         self.create_subscription(Imu, "/imu", self.imuCb, 1)  # For orientation
+        self.mc_subscription = self.create_subscription(
+            Bool, "/controller_signal", self.mc_callback, 10
+        )  # For the signal to reset the origin of the robot
 
         self.odom_pub = self.create_publisher(Odometry, "/gnss/odom", 1)
 
@@ -47,6 +50,12 @@ class FixToTransformNode(Node):
         # NOTE: Rohan fix
         self.origin_utm_x = None
         self.origin_utm_y = None
+
+    def mc_callback(self, msg: Bool):
+        """Gets the signal to reset the origin of the robot"""
+        if msg.data:
+            self.origin_utm_x = None
+            self.origin_utm_y = None
 
     def imuCb(self, msg: Imu):
         # Check for valid quaternion
@@ -77,6 +86,12 @@ class FixToTransformNode(Node):
         if self.origin_utm_x is None and self.origin_utm_y is None:
             self.origin_utm_x = utm_x
             self.origin_utm_y = utm_y
+
+            # Publish the robot_origin transform message
+            self.publish_transform(
+                self.tf_broadcaster, utm_x, utm_y, 0.0, "robot_origin"
+            )
+
             # self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
             self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
 
@@ -118,6 +133,29 @@ class FixToTransformNode(Node):
         odom.pose.pose.position.z = msg.altitude - self.origin_z
         odom.pose.pose.orientation = t.transform.rotation
         self.odom_pub.publish(odom)
+
+    def publish_transform(self, tf_broadcaster, x, y, z, child_frame):
+        """Publishes a transform via tf_broadcaster"""
+        t = TransformStamped()
+        t.header = self.getHeader()
+        t.child_frame_id = child_frame
+
+        # Set translation
+        t.transform.translation.x = x
+        t.transform.translation.y = y
+        t.transform.translation.z = z
+
+        # Convert Euler angles to quaternion
+        if self.yaw_enu is not None:
+            q = R.from_euler("z", self.yaw_enu, degrees=False).as_quat()
+            t.transform.rotation.x = q[0]
+            t.transform.rotation.y = q[1]
+            t.transform.rotation.z = q[2]
+            t.transform.rotation.w = q[3]
+            # Broadcast the transform
+            tf_broadcaster.sendTransform(t)
+        else:
+            self.get_logger().warn("Could not publish the transform")
 
     def getHeader(self):
         msg = Header()

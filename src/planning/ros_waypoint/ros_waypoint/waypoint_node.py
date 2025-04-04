@@ -699,7 +699,7 @@ class WayPointController(Node):
         """Callback to check if the motion controller is ready for waypoints"""
         # self.mc_bool = msg.data
         self.get_logger().info("We trying to send the waypoints")
-        self.publishPath()
+        # self.publishPath()
 
     def signal_callback(self, msg):
         """Get signal to send or not send waypoints"""

@@ -196,7 +196,7 @@ class MotionController(Node):
         self.get_logger().info(f"Currently at: ({self.ego_x}, {self.ego_y})")
         self.reset()
         # Send signal to let waypoint node that we can accept more waypoints
-        # self.controller_signal_publisher.publish(Bool(data=True))
+        self.controller_signal_publisher.publish(Bool(data=True))
 
     def reset(self):
         """Resets key values and the robot"""

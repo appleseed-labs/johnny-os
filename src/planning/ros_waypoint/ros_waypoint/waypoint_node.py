@@ -691,7 +691,8 @@ class WayPointController(Node):
 
         # Cache this for later
         self.latest_path = path_msg
-
+        # Lets go ahead and send the path
+        self.publishPath()
         self.get_logger().info(f"Published path with {len(final_path)} points")
 
     def mc_callback(self, msg):

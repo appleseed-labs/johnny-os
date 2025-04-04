@@ -73,12 +73,13 @@ class FixToTransformNode(Node):
     def fixCb(self, msg: NavSatFix):
         # Convert to UTM
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
-        # NOTE: Rohan fix
+        # NOTE: Rohan fix (Get the initial origin of the robot)
         if self.origin_utm_x is None and self.origin_utm_y is None:
             self.origin_utm_x = utm_x
             self.origin_utm_y = utm_y
-            self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
+            # self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
             self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
+
         # Calculate the position relative to the origin
         x = utm_x - self.origin_utm_x
         y = utm_y - self.origin_utm_y

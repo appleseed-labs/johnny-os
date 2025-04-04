@@ -52,7 +52,7 @@ class MotionController(Node):
         self.timer = self.create_timer(0.1, self.spinController)
 
         # NOTE: This is for testing purposes
-        self.controller_signal_publisher.publish(Bool(data=True))
+        # self.controller_signal_publisher.publish(Bool(data=True))
 
     def transformPose(self, pose_msg: PoseStamped, target_frame: str):
         """Transform a PoseStamped message to a target frame
@@ -93,8 +93,6 @@ class MotionController(Node):
             pose = pose_stamped.pose
             loc_tuple = (pose.position.x, pose.position.y)
             self.waypoints.append(loc_tuple)
-        # Create timer to start the control loop again
-        self.timer = self.create_timer(0.1, self.spinController)
         # self.get_logger().info(f"Got waypoints: {self.waypoints}")
 
     def findLookaheadPoint(self, lookahead_distance):
@@ -198,7 +196,7 @@ class MotionController(Node):
         self.get_logger().info(f"Currently at: ({self.ego_x}, {self.ego_y})")
         self.reset()
         # Send signal to let waypoint node that we can accept more waypoints
-        self.controller_signal_publisher.publish(Bool(data=True))
+        # self.controller_signal_publisher.publish(Bool(data=True))
 
     def reset(self):
         """Resets key values and the robot"""
@@ -207,7 +205,7 @@ class MotionController(Node):
         twist_msg.angular.z = 0.0
         self.twist_publisher.publish(twist_msg)
         self.waypoints = []
-        self.timer.cancel()
+        # self.timer.cancel()
 
     def findAngLinSpeeds(self, lookahead_point, remaining_distance, adaptive_lookahead):
         """Find the angular and linear speed

@@ -135,6 +135,11 @@ class FixToTransformNode(Node):
         self.odom_pub.publish(odom)
 
     def gps_callback(self, msg: GPSFix):
+        """Callback for SwiftnavROS2 to get GPSFix and convert it to odometry message
+
+        Args:
+            msg (GPSFix): _description_
+        """
         if msg.status.status < 0:
             self.get_logger().warn("No valid GPS fix")
             return

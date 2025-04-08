@@ -17,6 +17,7 @@ from geometry_msgs.msg import TransformStamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import NavSatFix, Imu
 from std_msgs.msg import Header, Bool
+from gps_msgs.msg import GPSFix
 
 
 class FixToTransformNode(Node):
@@ -29,7 +30,10 @@ class FixToTransformNode(Node):
 
         self.setUpParameters()
 
-        self.create_subscription(NavSatFix, "/gnss/fix", self.fixCb, 1)  # For position
+        # self.create_subscription(NavSatFix, "/gnss/fix", self.fixCb, 1)  # For position
+        self.create_subscription(
+            GPSFix, "/gpsfix", self.gps_callback, 1
+        )  # For position
         self.create_subscription(Imu, "/imu", self.imuCb, 1)  # For orientation
         self.mc_subscription = self.create_subscription(
             Bool, "/controller_signal", self.mc_callback, 10
@@ -140,9 +144,9 @@ class FixToTransformNode(Node):
         Args:
             msg (GPSFix): _description_
         """
-        if msg.status.status < 0:
-            self.get_logger().warn("No valid GPS fix")
-            return
+        # if msg.status.status < 0:
+        #     self.get_logger().warn("No valid GPS fix")
+        #     return
 
         # Convert lat/lon to local x/y in meters
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
@@ -159,8 +163,8 @@ class FixToTransformNode(Node):
             # self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
             self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
 
-        local_x = utm_x - self.origin_x
-        local_y = utm_y - self.origin_y
+        local_x = utm_x - self.origin_utm_x
+        local_y = utm_y - self.origin_utm_y
 
         # Convert track (degrees from north) to yaw in radians
         yaw_deg = msg.track

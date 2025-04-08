@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation as R
 import utm
 
 # Messages
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import NavSatFix, Imu
 from std_msgs.msg import Header, Bool
@@ -133,6 +133,52 @@ class FixToTransformNode(Node):
         odom.pose.pose.position.z = msg.altitude - self.origin_z
         odom.pose.pose.orientation = t.transform.rotation
         self.odom_pub.publish(odom)
+
+    def gps_callback(self, msg: GPSFix):
+        if msg.status.status < 0:
+            self.get_logger().warn("No valid GPS fix")
+            return
+
+        # Convert lat/lon to local x/y in meters
+        utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
+        # NOTE: Rohan fix (Get the initial origin of the robot)
+        if self.origin_utm_x is None and self.origin_utm_y is None:
+            self.origin_utm_x = utm_x
+            self.origin_utm_y = utm_y
+
+            # Publish the robot_origin transform message
+            self.publish_transform(
+                self.tf_broadcaster, utm_x, utm_y, 0.0, "robot_origin"
+            )
+
+            # self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
+            self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
+
+        local_x = utm_x - self.origin_x
+        local_y = utm_y - self.origin_y
+
+        # Convert track (degrees from north) to yaw in radians
+        yaw_deg = msg.track
+        self.yaw_enu = math.radians(yaw_deg)
+
+        quat = R.from_euler("z", self.yaw_enu, degrees=False).as_quat()
+
+        # Create Odom message
+        odom_msg = Odometry()
+        odom_msg.header = self.getHeader()
+        odom_msg.child_frame_id = "base_link"
+
+        odom_msg.pose.pose.position.x = local_x
+        odom_msg.pose.pose.position.y = local_y
+        odom_msg.pose.pose.position.z = msg.altitude
+        odom_msg.pose.pose.orientation = Quaternion(
+            x=quat[0], y=quat[1], z=quat[2], w=quat[3]
+        )
+
+        self.odom_pub.publish(odom_msg)
+        self.get_logger().info(
+            f"Published Odom: x={local_x:.2f}, y={local_y:.2f}, yaw={yaw_deg:.2f}°"
+        )
 
     def publish_transform(self, tf_broadcaster, x, y, z, child_frame):
         """Publishes a transform via tf_broadcaster"""

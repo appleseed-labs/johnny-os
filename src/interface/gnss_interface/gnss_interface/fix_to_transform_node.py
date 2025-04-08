@@ -48,12 +48,12 @@ class FixToTransformNode(Node):
 
         # Calculate our map origin
         lat0, lon0, alt0 = self.get_parameter("map_origin_lat_lon_alt_degrees").value
-        # self.origin_utm_x, self.origin_utm_y, _, __ = utm.from_latlon(lat0, lon0)
+        self.origin_utm_x, self.origin_utm_y, _, __ = utm.from_latlon(lat0, lon0)
         self.origin_z = alt0
 
         # NOTE: Rohan fix
-        self.origin_utm_x = None
-        self.origin_utm_y = None
+        self.origin_utm_robot_x = None
+        self.origin_utm_robot_y = None
 
     def mc_callback(self, msg: Bool):
         """Gets the signal to reset the origin of the robot"""
@@ -88,8 +88,8 @@ class FixToTransformNode(Node):
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
         # NOTE: Rohan fix (Get the initial origin of the robot)
         if self.origin_utm_x is None and self.origin_utm_y is None:
-            self.origin_utm_x = utm_x
-            self.origin_utm_y = utm_y
+            self.origin_utm_robot_x = utm_x
+            self.origin_utm_robot_y = utm_y
 
             # Publish the robot_origin transform message
             self.publish_transform(
@@ -98,8 +98,16 @@ class FixToTransformNode(Node):
 
             # self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
             self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
+            
+        # Publish the robot's current loc relative to where it started out at
+        x_loc_rob = utm_x - self.origin_utm_robot_x
+        y_loc_rob = utm_y - self.origin_utm_robot_y
+        # Publish the robot transform message
+        self.publish_transform(
+                self.tf_broadcaster, x_loc_rob, y_loc_rob, 0.0, "robot_position"
+            )
 
-        # Calculate the position relative to the origin
+        # Calculate the position relative to the map origin
         x = utm_x - self.origin_utm_x
         y = utm_y - self.origin_utm_y
 
@@ -144,9 +152,9 @@ class FixToTransformNode(Node):
         Args:
             msg (GPSFix): _description_
         """
-        # if msg.status.status < 0:
-        #     self.get_logger().warn("No valid GPS fix")
-        #     return
+        if msg.status.status < 0:
+            self.get_logger().warn("No valid GPS fix")
+            return
 
         # Convert lat/lon to local x/y in meters
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)

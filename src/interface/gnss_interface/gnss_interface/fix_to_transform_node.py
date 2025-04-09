@@ -58,8 +58,8 @@ class FixToTransformNode(Node):
     def mc_callback(self, msg: Bool):
         """Gets the signal to reset the origin of the robot"""
         if msg.data:
-            self.origin_utm_x = None
-            self.origin_utm_y = None
+            self.origin_utm_robot_x = None
+            self.origin_utm_robot_y = None
 
     def imuCb(self, msg: Imu):
         # Check for valid quaternion
@@ -159,9 +159,9 @@ class FixToTransformNode(Node):
         # Convert lat/lon to local x/y in meters
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
         # NOTE: Rohan fix (Get the initial origin of the robot)
-        if self.origin_utm_x is None and self.origin_utm_y is None:
-            self.origin_utm_x = utm_x
-            self.origin_utm_y = utm_y
+        if self.origin_utm_robot_x is None and self.origin_utm_robot_x is None:
+            self.origin_utm_robot_x = utm_x
+            self.origin_utm_robot_x = utm_y
 
             # Publish the robot_origin transform message
             self.publish_transform(
@@ -218,7 +218,7 @@ class FixToTransformNode(Node):
             # Broadcast the transform
             tf_broadcaster.sendTransform(t)
         else:
-            self.get_logger().warn("Could not publish the transform")
+            self.get_logger().warn(f"Could not publish the transform for {child_frame}")
 
     def getHeader(self):
         msg = Header()

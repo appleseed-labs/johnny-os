@@ -618,8 +618,10 @@ class WayPointController(Node):
         """
 
         try:
-            # Get the latest transform from map to base_link
-            t = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
+            # Get the latest transform from map to robot_origin
+            t = self.tf_buffer.lookup_transform(
+                "map", "robot_position", rclpy.time.Time()
+            )
             self.ego_x = t.transform.translation.x
             self.ego_y = t.transform.translation.y
             self.ego_yaw = R.from_quat(
@@ -652,8 +654,10 @@ class WayPointController(Node):
             ]
         ).as_euler("xyz")[2]
 
-        print(f"Ego Pose: ({self.ego_x}, {self.ego_y}), Yaw: {self.ego_yaw}")
-        print(
+        self.get_logger().info(
+            f"Ego Pose: ({self.ego_x}, {self.ego_y}), Yaw: {self.ego_yaw}"
+        )
+        self.get_logger().info(
             f"Goal Pose: ({msg.pose.position.x}, {msg.pose.position.y}), Yaw: {goal_yaw}"
         )
 

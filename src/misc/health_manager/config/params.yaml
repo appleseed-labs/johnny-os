@@ -1,0 +1,6 @@
+health_manager:
+  ros__parameters:
+    monitored_nodes: ["controller", "perception", "navigation"]
+    critical_nodes: ["controller"]
+    check_interval: 1.0
+    node_timeout: 3.0

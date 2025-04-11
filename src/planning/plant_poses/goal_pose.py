@@ -42,7 +42,7 @@ class plantPose(Node):
         if(occupancy_grid[goal]==1):
             goal_occupied = True
             print("goal is occupied")
-            occupancy_grid[goal] = 0
+            return None
         
         rows, cols = occupancy_grid.shape
         open_list = []

@@ -46,6 +46,10 @@ class MotionController(Node):
         self.ego_y = None
         self.ego_yaw = None
 
+        # Initial pose of robot
+        self.init_robot_x = None
+        self.init_robot_y = None
+
         # Counter to help us track the amount of lookahead_points not found
         self.lookahead_not_found_counter = 0
         # Initilize timer for control loop
@@ -66,7 +70,7 @@ class MotionController(Node):
             return pose_msg
 
         try:
-            # Get the latest transform from map to robot_position
+            # Get the latest transform from map to base_link
             t = self.tf_buffer.lookup_transform(
                 target_frame, pose_msg.header.frame_id, rclpy.time.Time()
             )
@@ -85,15 +89,17 @@ class MotionController(Node):
         poses = msg.poses
         # Get the needed x, y tuples for waypoints
         for pose_stamped in poses:
-            if pose_stamped.header.frame_id != "robot_position":
+            if pose_stamped.header.frame_id != "base_link":
                 # Transform the pose to the ego frame
-                pose_stamped = self.transformPose(pose_stamped, "robot_position")
+                pose_stamped = self.transformPose(pose_stamped, "base_link")
                 if pose_stamped is None:
                     continue
             pose = pose_stamped.pose
             loc_tuple = (pose.position.x, pose.position.y)
             self.waypoints.append(loc_tuple)
-        # self.get_logger().info(f"Got waypoints: {self.waypoints}")
+        self.get_logger().info(
+            f"Got waypoints: {self.waypoints[len(self.waypoints) - 1]}"
+        )
 
     def findLookaheadPoint(self, lookahead_distance):
         """Find a point on the path at lookahead distance ahead of the robot.
@@ -205,6 +211,8 @@ class MotionController(Node):
         twist_msg.angular.z = 0.0
         self.twist_publisher.publish(twist_msg)
         self.waypoints = []
+        self.init_robot_x = None
+        self.init_robot_y = None
         # self.timer.cancel()
 
     def findAngLinSpeeds(self, lookahead_point, remaining_distance, adaptive_lookahead):
@@ -270,7 +278,7 @@ class MotionController(Node):
                 min_dist = distance
                 # self.get_logger().info(f"Distance: {distance}\n")
                 # self.get_logger().info(f"Formula: {max(0.1, min(2.0, distance))}\n")
-                best_lookahead = max(0.01, min(1.5, distance))  # Adjust dynamically
+                best_lookahead = max(0.4, min(1.5, distance))  # Adjust dynamically
 
         self.get_logger().info(f"Adaptive lookahead distance: {best_lookahead}")
         return best_lookahead
@@ -286,11 +294,14 @@ class MotionController(Node):
 
         try:
             # Get the latest transform from map to base_link
-            t = self.tf_buffer.lookup_transform(
-                "robot_position", "map", rclpy.time.Time()
-            )
-            self.ego_x = t.transform.translation.x
-            self.ego_y = t.transform.translation.y
+            t = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
+            if self.init_robot_x is None or self.init_robot_y is None:
+                # To help get the robot starting position as 0,0
+                self.init_robot_x = t.transform.translation.x
+                self.init_robot_y = t.transform.translation.y
+
+            self.ego_x = t.transform.translation.x - self.init_robot_x
+            self.ego_y = t.transform.translation.y - self.init_robot_y
             self.ego_yaw = R.from_quat(
                 [
                     t.transform.rotation.x,
@@ -299,7 +310,7 @@ class MotionController(Node):
                     t.transform.rotation.w,
                 ]
             ).as_euler("xyz")[2]
-            # self.get_logger().info(f"Loc: {self.ego_x}, {self.ego_y}")
+            self.get_logger().info(f"Loc: {self.ego_x}, {self.ego_y}")
         except TransformException as ex:
             self.get_logger().warning(
                 f"Could not find ego transform. Skipping control loop: {ex}"
@@ -313,7 +324,6 @@ class MotionController(Node):
         )
 
         # Stop if close to goal
-
         # TODO: Parameterize this distance threshold
         if remaining_distance < 0.25:
             self.get_logger().info("We are close to the waypoint!")

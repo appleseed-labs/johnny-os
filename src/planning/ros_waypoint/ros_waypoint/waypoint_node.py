@@ -582,6 +582,10 @@ class WayPointController(Node):
             ]
         )
 
+        # Initial pose of robot
+        self.init_robot_x = None
+        self.init_robot_y = None
+
         self.latest_path = None
 
     def transformPose(self, pose_msg: PoseStamped, target_frame: str):
@@ -618,12 +622,15 @@ class WayPointController(Node):
         """
 
         try:
-            # Get the latest transform from map to robot_origin
-            t = self.tf_buffer.lookup_transform(
-                "map", "robot_position", rclpy.time.Time()
-            )
-            self.ego_x = t.transform.translation.x
-            self.ego_y = t.transform.translation.y
+            # Get the latest transform from map to base_link
+            t = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
+            # if self.init_robot_x is None or self.init_robot_y is None:
+            #     # To help get the robot starting position as 0,0
+            #     self.init_robot_x = t.transform.translation.x
+            #     self.init_robot_y = t.transform.translation.y
+
+            self.ego_x = t.transform.translation.x  # Try this or 0.0
+            self.ego_y = t.transform.translation.y  # Loook right above
             self.ego_yaw = R.from_quat(
                 [
                     t.transform.rotation.x,
@@ -654,10 +661,8 @@ class WayPointController(Node):
             ]
         ).as_euler("xyz")[2]
 
-        self.get_logger().info(
-            f"Ego Pose: ({self.ego_x}, {self.ego_y}), Yaw: {self.ego_yaw}"
-        )
-        self.get_logger().info(
+        print(f"Ego Pose: ({self.ego_x}, {self.ego_y}), Yaw: {self.ego_yaw}")
+        print(
             f"Goal Pose: ({msg.pose.position.x}, {msg.pose.position.y}), Yaw: {goal_yaw}"
         )
 
@@ -695,8 +700,7 @@ class WayPointController(Node):
 
         # Cache this for later
         self.latest_path = path_msg
-        # Lets go ahead and send the path
-        self.publishPath()
+
         self.get_logger().info(f"Published path with {len(final_path)} points")
 
     def mc_callback(self, msg):

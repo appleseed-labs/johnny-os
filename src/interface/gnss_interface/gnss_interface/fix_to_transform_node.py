@@ -207,17 +207,23 @@ class FixToTransformNode(Node):
         t.transform.translation.x = x
         t.transform.translation.y = y
         t.transform.translation.z = z
-
-        # Convert Euler angles to quaternion
-        if self.yaw_enu is not None:
-            q = R.from_euler("z", self.yaw_enu, degrees=False).as_quat()
-            t.transform.rotation.x = q[0]
-            t.transform.rotation.y = q[1]
-            t.transform.rotation.z = q[2]
-            t.transform.rotation.w = q[3]
+        try:
+            # Convert Euler angles to quaternion
+            if self.yaw_enu is not None:
+                q = R.from_euler("z", self.yaw_enu, degrees=False).as_quat()
+                t.transform.rotation.x = q[0]
+                t.transform.rotation.y = q[1]
+                t.transform.rotation.z = q[2]
+                t.transform.rotation.w = q[3]
+            else:
+                # Publish a 0 for the yaw then
+                t.transform.rotation.x = 0.0
+                t.transform.rotation.y = 0.0
+                t.transform.rotation.z = 0.0
+                t.transform.rotation.w = 0.0
             # Broadcast the transform
             tf_broadcaster.sendTransform(t)
-        else:
+        except:
             self.get_logger().warn(f"Could not publish the transform for {child_frame}")
 
     def getHeader(self):

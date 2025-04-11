@@ -18,18 +18,18 @@
 namespace health_manager
 {
 
-    class HealthMonitor : public rclcpp::Node
+    class HealthManager : public rclcpp::Node
     {
     public:
         /**
-         * @brief Constructor for the HealthMonitor node
+         * @brief Constructor for the HealthManager node
          */
-        explicit HealthMonitor();
+        explicit HealthManager();
 
         /**
-         * @brief Destructor for the HealthMonitor node
+         * @brief Destructor for the HealthManager node
          */
-        virtual ~HealthMonitor() = default;
+        virtual ~HealthManager() = default;
 
     private:
         /**

@@ -1,11 +1,11 @@
 #include <rclcpp/rclcpp.hpp>
-#include "health_manager/health_manager.hpp"
+#include "grid_generation/lidar_to_occupancy.hpp"
 
 int main(int argc, char *argv[])
 {
     rclcpp::init(argc, argv);
 
-    auto node = std::make_shared<health_manager::HealthManager>();
+    auto node = std::make_shared<grid_generation::LidarToOccupancyNode>();
 
     // Use a multithreaded executor for better responsiveness
     rclcpp::executors::MultiThreadedExecutor executor;

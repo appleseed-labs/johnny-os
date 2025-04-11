@@ -80,7 +80,11 @@ class FixToTransformNode(Node):
         t.child_frame_id = "base_link"
         t.transform.translation.x = x
         t.transform.translation.y = y
-        t.transform.translation.z = msg.altitude - self.origin_z
+        # t.transform.translation.z = msg.altitude - self.origin_z
+
+        # Here we use the planar assumption, that z is zero. Big assumption,
+        # but it simplifies things greatly!
+        t.transform.translation.z = 0.0
 
         # Set the orientation (yaw) from the IMU data
         if self.yaw_enu is not None:

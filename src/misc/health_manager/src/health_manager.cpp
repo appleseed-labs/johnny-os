@@ -3,7 +3,7 @@
 namespace health_manager
 {
 
-    HealthMonitor::HealthMonitor()
+    HealthManager::HealthManager()
         : Node("health_manager")
     {
         // Declare parameters with descriptors
@@ -48,19 +48,19 @@ namespace health_manager
         diagnostics_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
             "/diagnostics",
             10,
-            std::bind(&HealthMonitor::diagnostics_callback, this, std::placeholders::_1),
+            std::bind(&HealthManager::diagnostics_callback, this, std::placeholders::_1),
             sub_options);
 
         // Create timer for health checking
         health_timer_ = create_wall_timer(
             std::chrono::duration<double>(check_interval_),
-            std::bind(&HealthMonitor::check_health, this),
+            std::bind(&HealthManager::check_health, this),
             callback_group);
 
         RCLCPP_INFO(get_logger(), "Health monitor initialized");
     }
 
-    void HealthMonitor::diagnostics_callback(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg)
+    void HealthManager::diagnostics_callback(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg)
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
 
@@ -81,7 +81,7 @@ namespace health_manager
         }
     }
 
-    void HealthMonitor::check_health()
+    void HealthManager::check_health()
     {
         double current_time = now().seconds();
         bool system_healthy = true;
@@ -132,14 +132,14 @@ namespace health_manager
         }
     }
 
-    void HealthMonitor::initiate_safety_protocol()
+    void HealthManager::initiate_safety_protocol()
     {
         // Implement safety actions here
         RCLCPP_WARN(get_logger(), "Initiating safety protocol");
         // You could publish emergency stop commands here
     }
 
-    void HealthMonitor::restore_normal_operation()
+    void HealthManager::restore_normal_operation()
     {
         // Restore normal operation when system becomes healthy again
         RCLCPP_INFO(get_logger(), "Restoring normal operation");

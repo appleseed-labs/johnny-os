@@ -1,0 +1,3 @@
+lidar_to_occupancy:
+  ros__parameters:
+    ransac_distance_thresh: 10.0 # meters

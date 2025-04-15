@@ -83,23 +83,24 @@ class pathPlanner(Node):
         # Manhattan distance heuristic
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
     
-    def a_star_algorithm(self, occupancy_grid, start, goal):
+    def a_star_algorithm(self, occupancy_grid, start_x, start_y, goal_x, goal_y):
 
         # if obstacle at start position, ignore
-        if(occupancy_grid[start]==1):
-            occupancy_grid[start] = 0
+        if(occupancy_grid[start_x][start_y]==1):
+            occupancy_grid[goal_x][goal_y] = 0
         # if obstacle at end position, return None
-        if(occupancy_grid[goal]==1):
+        if(occupancy_grid[goal_x][goal_y]==1):
             # print("goal is occupied")
             self.get_logger().info('goal is occupied.')
             return None
         
-        rows, cols = occupancy_grid.shape
+        cols = len(occupancy_grid)
+        rows = len(occupancy_grid[0])
         open_list = []
-        heapq.heappush(open_list, (0, start))
+        heapq.heappush(open_list, (0, (start_x,start_y)))
         came_from = {}
-        g_score = {start: 0}
-        f_score = {start: self.heuristic(start, goal)}
+        g_score = {(start_x,start_y): 0}
+        f_score = {(start_x,start_y): self.heuristic((start_x,start_y), (goal_x,goal_y))}
 
         directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
@@ -107,12 +108,12 @@ class pathPlanner(Node):
             _, current = heapq.heappop(open_list)
 
             # Return path in correct order
-            if current == goal:
+            if current == (goal_x,goal_y):
                 path = []
                 while current in came_from:
                     path.append(current)
                     current = came_from[current]
-                path.append(start)
+                path.append((start_x,start_y))
                 return path[::-1]  
 
             for dx, dy in directions:
@@ -124,7 +125,7 @@ class pathPlanner(Node):
                     if neighbor not in g_score or tentative_g < g_score[neighbor]:
                         came_from[neighbor] = current
                         g_score[neighbor] = tentative_g
-                        f_score[neighbor] = tentative_g + self.heuristic(neighbor, goal)
+                        f_score[neighbor] = tentative_g + self.heuristic(neighbor, (goal_x,goal_y))
                         heapq.heappush(open_list, (f_score[neighbor], neighbor))
 
         return None  # No path found
@@ -132,7 +133,7 @@ class pathPlanner(Node):
     def generate_traj(self):
 
         # generate path
-        path = self.a_star_algorithm(self.grid, (self.start_x, self.start_y), (self.goal_x, self.goal_y))
+        path = self.a_star_algorithm(self.grid, self.start_x, self.start_y, self.goal_x, self.goal_y)
 
         # if no path found
         if(path == None):
@@ -168,3 +169,4 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+

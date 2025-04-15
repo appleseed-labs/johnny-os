@@ -46,6 +46,10 @@ class MotionController(Node):
         self.ego_y = None
         self.ego_yaw = None
 
+        # To see the current map coordinates
+        self.map_x = None
+        self.map_y = None
+
         # Initial pose of robot
         self.init_robot_x = None
         self.init_robot_y = None
@@ -79,6 +83,7 @@ class MotionController(Node):
             transformed_pose.header.stamp = pose_msg.header.stamp
             transformed_pose.header.frame_id = target_frame
             transformed_pose.pose = do_transform_pose(pose_msg.pose, t)
+            self.get_logger().info(f"{transformed_pose.pose.position}")
             return transformed_pose
         except TransformException as ex:
             self.get_logger().warning(f"Could not transform pose: {ex}")
@@ -200,6 +205,7 @@ class MotionController(Node):
         # Stop if close to goal
         self.get_logger().info("Goal reached!")
         self.get_logger().info(f"Currently at: ({self.ego_x}, {self.ego_y})")
+        self.get_logger().info(f"In map coordinates at: ({self.map_x}, {self.map_y})")
         self.reset()
         # Send signal to let waypoint node that we can accept more waypoints
         self.controller_signal_publisher.publish(Bool(data=True))
@@ -278,20 +284,20 @@ class MotionController(Node):
                 min_dist = distance
                 # self.get_logger().info(f"Distance: {distance}\n")
                 # self.get_logger().info(f"Formula: {max(0.1, min(2.0, distance))}\n")
-                best_lookahead = max(0.4, min(1.5, distance))  # Adjust dynamically
+                best_lookahead = max(0.4, distance)  # Adjust dynamically
 
         self.get_logger().info(f"Adaptive lookahead distance: {best_lookahead}")
         return best_lookahead
 
     def spinController(self):
         """Compute and publish velocity commands using Pure Pursuit."""
+        # return
         # No waypoints recieved
         if len(self.waypoints) == 0:
             # self.get_logger().warning(
             #     "No waypoints received yet. Skipping control loop."
             # )
             return
-
         try:
             # Get the latest transform from map to base_link
             t = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
@@ -299,6 +305,9 @@ class MotionController(Node):
                 # To help get the robot starting position as 0,0
                 self.init_robot_x = t.transform.translation.x
                 self.init_robot_y = t.transform.translation.y
+
+            self.map_x = t.transform.translation.x
+            self.map_y = t.transform.translation.y
 
             self.ego_x = t.transform.translation.x - self.init_robot_x
             self.ego_y = t.transform.translation.y - self.init_robot_y
@@ -311,6 +320,10 @@ class MotionController(Node):
                 ]
             ).as_euler("xyz")[2]
             self.get_logger().info(f"Loc: {self.ego_x}, {self.ego_y}")
+            self.get_logger().info(
+                f"In map coordinates at: ({self.map_x}, {self.map_y})"
+            )
+            # self.get_logger().info(f"Yaw: {self.ego_yaw}")
         except TransformException as ex:
             self.get_logger().warning(
                 f"Could not find ego transform. Skipping control loop: {ex}"
@@ -344,8 +357,8 @@ class MotionController(Node):
             self.get_logger().warn("No valid lookahead point found!")
             self.lookahead_not_found_counter += 1
 
-            # If we have seen the no valid lookahead point then lets stop
-            if self.lookahead_not_found_counter == 20:
+            # FAILSAFE: If we have seen the no valid lookahead point then lets stop
+            if self.lookahead_not_found_counter == 250:
                 # Stop the robot
                 self.stop()
                 self.lookahead_not_found_counter = 0

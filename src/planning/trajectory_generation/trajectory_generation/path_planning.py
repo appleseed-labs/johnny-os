@@ -20,12 +20,13 @@ class pathPlanner(Node):
     RATE = 100
 
     def __init__(self):
+        super().__init__('path_planner')
 
         # subscribe to occupancy grid
         self.occupancy_grid_subscriber = self.create_subscription(
             OccupancyGrid,
             "traj/occupancy_grid",
-            self.occupancy_grid_processor,
+            self.process_occupancy_grid,
             1
         )
 
@@ -33,7 +34,7 @@ class pathPlanner(Node):
         self.goal_position_subscriber = self.create_subscription(
             Pose,
             "traj/goal_pose",
-            self.goal_pose_processor,
+            self.process_goal_pose,
             1
         )
 
@@ -43,7 +44,6 @@ class pathPlanner(Node):
         # ROS2 timer for stepping
         self.timer = self.create_timer(1.0 / self.RATE, self.step)
 
-        super().__init__('path_planner')
         self.get_logger().info('INITIALIZED.')
 
     def dilate_grid(self, grid, dilate_width):
@@ -52,25 +52,35 @@ class pathPlanner(Node):
         dilated_grid = (cv2.dilate((np_grid), dilated_kernel, iteration = dilate_width))
         return dilated_grid.to_list()
         
-    def occupancy_grid_processor(self, msg:OccupancyGrid):
+    def process_occupancy_grid(self, msg:OccupancyGrid):
         self.occupancy_grid = msg
+
+        # get grid and info from occupancy_grid message
+        self.resolution = self.occupancy_grid.info.resolution
+        self.start_x = self.occupancy_grid.info.origin.position.x
+        self.start_y = self.occupancy_grid.info.origin.position.y
+
+        self.grid = np.array(self.occupancy_grid.data)
+        self.grid = self.grid.reshape((self.occupancy_grid.info.width, self.occupancy_grid.info.height))
+        self.grid = self.dilate_grid(self.grid, 1)
         
-    def goal_pose_processor(self, msg:Pose):
-        self.goal_pose = msg
+    def process_goal_pose(self, msg:Pose):
+        self.goal_x = self.goal_pose.x
+        self.goal_y = self.goal_pose.y
     
     def heuristic(self, a, b):
         # Manhattan distance heuristic
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
     
     def a_star_algorithm(self, occupancy_grid, start, goal):
-        goal_occupied = False
+
         # if obstacle at start position, ignore
         if(occupancy_grid[start]==1):
             occupancy_grid[start] = 0
         # if obstacle at end position, return None
         if(occupancy_grid[goal]==1):
-            goal_occupied = True
-            print("goal is occupied")
+            # print("goal is occupied")
+            self.get_logger().info('goal is occupied.')
             return None
         
         rows, cols = occupancy_grid.shape
@@ -92,11 +102,7 @@ class pathPlanner(Node):
                     path.append(current)
                     current = came_from[current]
                 path.append(start)
-                if(goal_occupied):
-                    # return path expect the goal position
-                    return path[:0:-1]
-                else:
-                    return path[::-1]  
+                return path[::-1]  
 
             for dx, dy in directions:
                 neighbor = (current[0] + dx, current[1] + dy)
@@ -111,27 +117,11 @@ class pathPlanner(Node):
                         heapq.heappush(open_list, (f_score[neighbor], neighbor))
 
         return None  # No path found
-        
-    def dilate_grid(self, grid, dilate_width):
-        dilated_kernel = np.ones((3, 3))
-        np_grid = np.array(grid)
-        dilated_grid = (cv2.dilate((np_grid), dilated_kernel, iteration = dilate_width))
-        return dilated_grid.to_list()
 
     def generate_traj(self):
-        # get grid and info from occupancy_grid message
-        resolution = self.occupancy_grid.info.resolution
-        start_x = self.occupancy_grid.info.width.info.origin.position.x 
-        start_y = self.occupancy_grid.info.width.info.origin.position.y
-        goal_x = self.goal_pose.x
-        goal_y = self.goal_pose.y
-
-        grid = np.array(self.occupancy_grid.data)
-        grid = grid.reshape((self.occupancy_grid.info.width, self.occupancy_grid.info.height))
-        grid = self.dilate_grid(grid, 1)
 
         # generate path
-        path = self.a_star_algorithm(grid, (start_x, start_y), (goal_x, goal_y))
+        path = self.a_star_algorithm(self.grid, (self.start_x, self.start_y), (self.goal_x, self.goal_y))
 
         # if no path found
         if(path == None):
@@ -146,8 +136,8 @@ class pathPlanner(Node):
             pose = PoseStamped()
             pose.header = path_msg.header
             # set pah points at the center of the grids
-            real_x = (x + 0.5) * resolution
-            real_y = (y + 0.5) * resolution
+            real_x = (x + 0.5) * self.resolution
+            real_y = (y + 0.5) * self.resolution
             pose.pose.position.x = float(real_x)
             pose.pose.position.y = float(real_y)
             path_msg.poses.append(pose)

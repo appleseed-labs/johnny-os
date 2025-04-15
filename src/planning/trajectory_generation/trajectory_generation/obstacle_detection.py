@@ -33,7 +33,7 @@ class obstacleDetector(Node):
         self.point_cloud_subscriber = self.create_subscription(
             PointCloud2,
             "steward",
-            self.processPointCloud,
+            self.process_point_cloud,
             1
         )
 
@@ -43,10 +43,9 @@ class obstacleDetector(Node):
         # ROS2 timer for stepping
         self.timer = self.create_timer(1.0 / self.RATE, self.step)
 
-        super().__init__('obstacle_detector')
         self.get_logger().info('INITIALIZED.')
 
-    def processPointCloud(self, msg: PointCloud2):
+    def process_point_cloud(self, msg: PointCloud2):
         # transformation parameters (need to the changed to real values)
         theta = 1
         x_offset = 1
@@ -73,7 +72,7 @@ class obstacleDetector(Node):
 
         return np_point_cloud
 
-    def createOccupancy_grid(self, processed_pc):
+    def create_occupancy_grid(self, processed_pc):
         max_x = max(processed_pc[:,0])
         min_x = min(processed_pc[:,0])
         max_y = max(processed_pc[:,1])
@@ -104,8 +103,8 @@ class obstacleDetector(Node):
         return msg
     
     def step(self):
-        processed_pc = self.processPointCloud()
-        occupancy_grid = self.createOccupancy_grid(processed_pc)
+        processed_pc = self.process_point_cloud()
+        occupancy_grid = self.create_occupancy_grid(processed_pc)
         self.occupancy_grid_publisher.publish(occupancy_grid)
 
 def main(args=None):

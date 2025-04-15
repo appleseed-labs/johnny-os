@@ -46,7 +46,7 @@ class pathPlanner(Node):
         # ROS2 timer for stepping
         self.timer = self.create_timer(1.0 / self.RATE, self.step)
 
-        super().__init__('obstacle_detector')
+        super().__init__('path_planner')
         self.get_logger().info('INITIALIZED.')
 
     def heuristic(self, a, b):

@@ -31,6 +31,9 @@
 
     <xacro:property name="dummy_inertia" value="1e-09" />
 
+    <!-- Include the xarm6 urdf -->
+    <xacro:include filename="$(find xarm_description)/urdf/xarm_device_macro.xacro" />
+
     <!--
     Optional paint colors.
     Available colors:
@@ -159,5 +162,14 @@
         <parent link="base_link" />
         <child link="lidar_link" />
     </joint>
+
+    <link name="arm_link" />
+    <joint name="arm_link_joint" type="fixed">
+        <origin xyz="1.25 0 1.0" rpy="0 ${PI/2} 0" />
+        <parent link="base_link" />
+        <child link="arm_link" />
+    </joint>
+
+    <xacro:xarm_device dof="6" attach_to="arm_link" add_gripper="true" />
 
 </robot>

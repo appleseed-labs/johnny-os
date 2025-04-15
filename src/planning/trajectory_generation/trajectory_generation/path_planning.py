@@ -20,15 +20,12 @@ class pathPlanner(Node):
     RATE = 100
 
     def __init__(self):
-        # initialize variables
-        self.occupancy_grid
-        self.goal_pose
 
         # subscribe to occupancy grid
         self.occupancy_grid_subscriber = self.create_subscription(
             OccupancyGrid,
             "traj/occupancy_grid",
-            self.occupancy_grid,
+            self.occupancy_grid_processor,
             1
         )
 
@@ -36,7 +33,7 @@ class pathPlanner(Node):
         self.goal_position_subscriber = self.create_subscription(
             Pose,
             "traj/goal_pose",
-            self.goal_pose,
+            self.goal_pose_processor,
             1
         )
 
@@ -49,6 +46,18 @@ class pathPlanner(Node):
         super().__init__('path_planner')
         self.get_logger().info('INITIALIZED.')
 
+    def dilate_grid(self, grid, dilate_width):
+        dilated_kernel = np.ones((3, 3))
+        np_grid = np.array(grid)
+        dilated_grid = (cv2.dilate((np_grid), dilated_kernel, iteration = dilate_width))
+        return dilated_grid.to_list()
+        
+    def occupancy_grid_processor(self, msg:OccupancyGrid):
+        self.occupancy_grid = msg
+        
+    def goal_pose_processor(self, msg:Pose):
+        self.goal_pose = msg
+    
     def heuristic(self, a, b):
         # Manhattan distance heuristic
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
@@ -102,6 +111,7 @@ class pathPlanner(Node):
                         heapq.heappush(open_list, (f_score[neighbor], neighbor))
 
         return None  # No path found
+        
     def dilate_grid(self, grid, dilate_width):
         dilated_kernel = np.ones((3, 3))
         np_grid = np.array(grid)

@@ -76,8 +76,8 @@ class pathPlanner(Node):
         self.grid = self.dilate_grid(self.grid, 1)
         
     def process_goal_pose(self, msg:Pose):
-        self.goal_x = self.goal_pose.x
-        self.goal_y = self.goal_pose.y
+        self.goal_x = int(msg.position.x)
+        self.goal_y = int(msg.position.y)
     
     def heuristic(self, a, b):
         # Manhattan distance heuristic

@@ -25,6 +25,9 @@ class obstacleDetector(Node):
     RATE = 100
     # grid resolution (m/cell)
     GRID_RES = 0.1
+    
+    processed_pc = None
+    map_load_time = None
 
     def __init__(self):
         super().__init__('obstacle_detector')
@@ -70,7 +73,7 @@ class obstacleDetector(Node):
         # filter by z > 0.5
         np_point_cloud = np_point_cloud[np_point_cloud[:, 2] > 0.5]
 
-        return np_point_cloud
+        self.processed_pc = np_point_cloud
 
     def create_occupancy_grid(self, processed_pc):
         max_x = max(processed_pc[:,0])
@@ -103,8 +106,7 @@ class obstacleDetector(Node):
         return msg
     
     def step(self):
-        processed_pc = self.process_point_cloud()
-        occupancy_grid = self.create_occupancy_grid(processed_pc)
+        occupancy_grid = self.create_occupancy_grid(self.processed_pc)
         self.occupancy_grid_publisher.publish(occupancy_grid)
 
 def main(args=None):

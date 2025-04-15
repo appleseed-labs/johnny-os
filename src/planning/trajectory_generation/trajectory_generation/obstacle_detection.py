@@ -3,6 +3,8 @@ import ros2_numpy as rnp
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
+from sensor_msgs_py import point_cloud2
+from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Float64
 from nav_msgs.msg import OccupancyGrid
 
@@ -25,14 +27,13 @@ class obstacleDetector(Node):
     GRID_RES = 0.1
 
     def __init__(self):
-        # initialize variables
-        self.point_cloud
+        super().__init__('obstacle_detector')
 
         # subscribe steward for point cloud
         self.point_cloud_subscriber = self.create_subscription(
             PointCloud2,
             "steward",
-            self.point_cloud,
+            self.processPointCloud,
             1
         )
 
@@ -45,13 +46,13 @@ class obstacleDetector(Node):
         super().__init__('obstacle_detector')
         self.get_logger().info('INITIALIZED.')
 
-    def processPointCloud(self):
+    def processPointCloud(self, msg: PointCloud2):
         # transformation parameters (need to the changed to real values)
         theta = 1
         x_offset = 1
         y_offset = 1
 
-        np_point_cloud = rnp.numpify(self.point_cloud_subscriber)
+        np_point_cloud = rnp.numpify(msg)
         self.map_load_time = self.get_clock().now().to_msg()
         num_points = np_point_cloud.size
 

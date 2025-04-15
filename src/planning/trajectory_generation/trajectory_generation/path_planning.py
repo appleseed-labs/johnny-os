@@ -18,6 +18,17 @@ import cv2 # only for dialation
 class pathPlanner(Node):
     # publish rate
     RATE = 100
+    
+    occupancy_grid = ""
+    grid = [[0]]
+    resolution = 0
+    start_x = 0
+    start_y = 0
+
+
+
+    goal_x = 0
+    goal_y = 0
 
     def __init__(self):
         super().__init__('path_planner')

@@ -19,7 +19,7 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            f"planner = {package_name}.obstacle_detection:main"
+            f"obstacle_detector = {package_name}.obstacle_detection:main"
             # ,
             # f"twist_tester = {package_name}.path_planning:main",
         ],

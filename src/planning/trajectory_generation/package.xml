@@ -6,11 +6,11 @@
   <description>Nodes to find a path based on obstacles detected by lidar point cloud.</description>
 
   <maintainer email="junyuzhu@andrew.cmu.edu">Junyu (Joyce) Zhu</maintainer>
-  <!-- <license>MIT</license> -->
+  <license>MIT</license>
 
   <depend>johnny_msgs</depend>
 
-  <!-- <export>
+  <export>
     <build_type>ament_python</build_type>
-  </export> -->
+  </export>
 </package>

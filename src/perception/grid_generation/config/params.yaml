@@ -1,0 +1,4 @@
+lidar_to_occupancy:
+  ros__parameters:
+    grid_size_cells: 100
+    grid_resolution: 0.2 # meters per cell

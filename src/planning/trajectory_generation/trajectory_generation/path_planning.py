@@ -58,18 +58,18 @@ class pathPlanner(Node):
         self.get_logger().info('INITIALIZED.')
 
     def dilate_grid(self, grid, dilate_width):
-        dilated_kernel = np.ones((3, 3))
-        np_grid = np.array(grid)
-        dilated_grid = (cv2.dilate((np_grid), dilated_kernel, iteration = dilate_width))
-        return dilated_grid.to_list()
+        dilated_kernel = np.ones((3, 3)).astype(np.uint8)
+        np_grid = np.array(grid).astype(np.uint8)
+        dilated_grid = (cv2.dilate((np_grid), dilated_kernel, iterations = dilate_width))
+        return dilated_grid.tolist()
         
     def process_occupancy_grid(self, msg:OccupancyGrid):
         self.occupancy_grid = msg
 
         # get grid and info from occupancy_grid message
         self.resolution = self.occupancy_grid.info.resolution
-        self.start_x = self.occupancy_grid.info.origin.position.x
-        self.start_y = self.occupancy_grid.info.origin.position.y
+        self.start_x = int(self.occupancy_grid.info.origin.position.x)
+        self.start_y = int(self.occupancy_grid.info.origin.position.y)
 
         self.grid = np.array(self.occupancy_grid.data)
         self.grid = self.grid.reshape((self.occupancy_grid.info.width, self.occupancy_grid.info.height))
@@ -83,24 +83,24 @@ class pathPlanner(Node):
         # Manhattan distance heuristic
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
     
-    def a_star_algorithm(self, occupancy_grid, start_x, start_y, goal_x, goal_y):
-
+    def a_star_algorithm(self, input_occupancy_grid, start, goal):
+        occupancy_grid = np.array(input_occupancy_grid)
         # if obstacle at start position, ignore
-        if(occupancy_grid[start_x][start_y]==1):
-            occupancy_grid[goal_x][goal_y] = 0
+        if(occupancy_grid[start]==1):
+            occupancy_grid[goal] = 0
         # if obstacle at end position, return None
-        if(occupancy_grid[goal_x][goal_y]==1):
+        if(occupancy_grid[goal]==1):
             # print("goal is occupied")
-            self.get_logger().info('goal is occupied.')
+            self.get_logger().info('goal is occupied!')
             return None
         
         cols = len(occupancy_grid)
         rows = len(occupancy_grid[0])
         open_list = []
-        heapq.heappush(open_list, (0, (start_x,start_y)))
+        heapq.heappush(open_list, (0, start))
         came_from = {}
-        g_score = {(start_x,start_y): 0}
-        f_score = {(start_x,start_y): self.heuristic((start_x,start_y), (goal_x,goal_y))}
+        g_score = {start: 0}
+        f_score = {start: self.heuristic(start, goal)}
 
         directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
@@ -108,12 +108,12 @@ class pathPlanner(Node):
             _, current = heapq.heappop(open_list)
 
             # Return path in correct order
-            if current == (goal_x,goal_y):
+            if current == goal:
                 path = []
                 while current in came_from:
                     path.append(current)
                     current = came_from[current]
-                path.append((start_x,start_y))
+                path.append(start)
                 return path[::-1]  
 
             for dx, dy in directions:
@@ -125,7 +125,7 @@ class pathPlanner(Node):
                     if neighbor not in g_score or tentative_g < g_score[neighbor]:
                         came_from[neighbor] = current
                         g_score[neighbor] = tentative_g
-                        f_score[neighbor] = tentative_g + self.heuristic(neighbor, (goal_x,goal_y))
+                        f_score[neighbor] = tentative_g + self.heuristic(neighbor, goal)
                         heapq.heappush(open_list, (f_score[neighbor], neighbor))
 
         return None  # No path found
@@ -133,7 +133,7 @@ class pathPlanner(Node):
     def generate_traj(self):
 
         # generate path
-        path = self.a_star_algorithm(self.grid, self.start_x, self.start_y, self.goal_x, self.goal_y)
+        path = self.a_star_algorithm(self.grid, (self.start_x, self.start_y), (self.goal_x, self.goal_y))
 
         # if no path found
         if(path == None):
@@ -147,7 +147,7 @@ class pathPlanner(Node):
         for (x, y) in path:
             pose = PoseStamped()
             pose.header = path_msg.header
-            # set pah points at the center of the grids
+            # set path points at the center of the grids
             real_x = (x + 0.5) * self.resolution
             real_y = (y + 0.5) * self.resolution
             pose.pose.position.x = float(real_x)
@@ -158,8 +158,9 @@ class pathPlanner(Node):
 
     def step(self):
         path_msg = self.generate_traj()
-        if(path_msg != None):
-            self.traj_publisher.publish(path_msg)
+        # if(path_msg != None):
+        self.get_logger().info('PUBLISHING.')
+        self.traj_publisher.publish(path_msg)
 
 def main(args=None):
     rclpy.init(args=args)

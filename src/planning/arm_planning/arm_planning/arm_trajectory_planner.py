@@ -13,6 +13,7 @@ import time
 import random
 import math
 from threading import Lock
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 
 
 class ArmTrajectoryPlanner(Node):
@@ -54,11 +55,18 @@ class ArmTrajectoryPlanner(Node):
             callback_group=self.callback_group,
         )
 
+        # QoS profile for getting the latest robot_description (transient local)
+        robot_description_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+
         self.robot_description_sub = self.create_subscription(
             String,
             "/robot_description",
             self.robot_description_callback,
-            10,
+            qos_profile=robot_description_qos,
             callback_group=self.callback_group,
         )
 
@@ -73,6 +81,9 @@ class ArmTrajectoryPlanner(Node):
 
         # Publisher for joint commands
         self.joint_command_pub = self.create_publisher(JointState, "/joint_command", 10)
+        self.test_pose_pub = self.create_publisher(Pose, "/target_pose", 10)
+
+        self.test_pose_sent = False
 
         self.get_logger().info("Arm Trajectory Planner initialized")
 
@@ -81,10 +92,31 @@ class ArmTrajectoryPlanner(Node):
             self.current_joint_state = msg
             self.get_logger().debug(f"Received joint state: {msg.position}")
 
+            if not self.test_pose_sent:
+                # Now we'll publish a test pose
+                self.send_test_pose()
+                self.test_pose_sent = True
+
+    def send_test_pose(self):
+        test_pose = Pose()
+        test_pose.position.x = 0.5
+        test_pose.position.y = 0.0
+        test_pose.position.z = 1.5
+        test_pose.orientation.x = 0.0
+        test_pose.orientation.y = 0.0
+        test_pose.orientation.z = 0.0
+        test_pose.orientation.w = 1.0
+        self.get_logger().info(f"Publishing test pose: {test_pose.position}")
+
+        self.test_pose_pub.publish(test_pose)
+
     def robot_description_callback(self, msg):
         self.robot_description = msg.data
         self.parse_robot_description()
         self.get_logger().info("Received robot description")
+
+        # Now we'll publish a test pose
+        self.send_test_pose()
 
     def target_pose_callback(self, msg):
         self.get_logger().info(f"Received target pose: {msg.position}")
@@ -186,13 +218,19 @@ class ArmTrajectoryPlanner(Node):
             start_state = list(self.current_joint_state.position)
 
         # Convert target pose to joint space (inverse kinematics)
+        self.get_logger().info(
+            f"Calculating IK for target pose: {target_pose.position}"
+        )
         goal_state = self.inverse_kinematics(target_pose)
+        self.get_logger().info(f"Goal state is {goal_state}")
+        self.get_logger().info(f"Start state is {start_state}")
 
         if goal_state is None:
             self.get_logger().error("Failed to compute inverse kinematics")
             return
 
         # Plan trajectory using RRT*
+
         trajectory = self.plan_rrt_star(start_state, goal_state)
 
         if trajectory is None or len(trajectory) == 0:

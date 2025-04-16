@@ -243,8 +243,7 @@ class MotionController(Node):
         # NOTE: Let's adjust lin. speed first
         linear_speed = min(0.5 * remaining_distance, 1.0)  # Cap max speed to be 1m/s
         if remaining_distance < 0.75:  # If within 0.75m of goal, slow down
-            linear_speed = min(linear_speed, 0.4)
-
+            linear_speed = min(max(linear_speed, 0.1), 0.4)  # In range of 0.1 - 0.4
         return angular_speed, linear_speed
 
     def findAdaptiveLookahead(self):

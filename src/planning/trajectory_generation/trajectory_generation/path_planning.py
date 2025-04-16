@@ -158,9 +158,9 @@ class pathPlanner(Node):
 
     def step(self):
         path_msg = self.generate_traj()
-        # if(path_msg != None):
-        self.get_logger().info('PUBLISHING.')
-        self.traj_publisher.publish(path_msg)
+        if(path_msg != None):
+            self.get_logger().info('PUBLISHING.')
+            self.traj_publisher.publish(path_msg)
 
 def main(args=None):
     rclpy.init(args=args)

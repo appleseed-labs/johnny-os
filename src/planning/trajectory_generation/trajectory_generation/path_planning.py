@@ -56,12 +56,6 @@ class pathPlanner(Node):
         self.timer = self.create_timer(1.0 / self.RATE, self.step)
 
         self.get_logger().info('INITIALIZED.')
-
-    def dilate_grid(self, grid, dilate_width):
-        dilated_kernel = np.ones((3, 3)).astype(np.uint8)
-        np_grid = np.array(grid).astype(np.uint8)
-        dilated_grid = (cv2.dilate((np_grid), dilated_kernel, iterations = dilate_width))
-        return dilated_grid.tolist()
         
     def process_occupancy_grid(self, msg:OccupancyGrid):
         self.occupancy_grid = msg
@@ -80,18 +74,16 @@ class pathPlanner(Node):
         self.goal_y = int(msg.position.y)
     
     def heuristic(self, a, b):
-        # Manhattan distance heuristic
-        return abs(a[0] - b[0]) + abs(a[1] - b[1])
-    
-    def a_star_algorithm(self, input_occupancy_grid, start, goal):
-        occupancy_grid = np.array(input_occupancy_grid)
+        # return abs(a[0] - b[0]) + abs(a[1] - b[1])
+        return ((a[0] - b[0])**2 + (a[1] - b[1])**2) ** (1/2)
+
+    def a_star_algorithm(self, occupancy_grid, start, goal):
         # if obstacle at start position, ignore
         if(occupancy_grid[start]==1):
             occupancy_grid[goal] = 0
         # if obstacle at end position, return None
         if(occupancy_grid[goal]==1):
-            # print("goal is occupied")
-            self.get_logger().info('goal is occupied!')
+            print("goal is occupied")
             return None
         
         cols = len(occupancy_grid)
@@ -125,18 +117,82 @@ class pathPlanner(Node):
                     if neighbor not in g_score or tentative_g < g_score[neighbor]:
                         came_from[neighbor] = current
                         g_score[neighbor] = tentative_g
-                        f_score[neighbor] = tentative_g + self.heuristic(neighbor, goal)
+                        f_score[neighbor] = tentative_g +  self.heuristic(neighbor, goal)
                         heapq.heappush(open_list, (f_score[neighbor], neighbor))
 
         return None  # No path found
 
+    def dilate_grid(self, grid, dilate_width):
+        dilated_kernel = np.ones((3, 3)).astype(np.uint8)
+        np_grid = grid.astype(np.uint8)
+        dilated_grid = (cv2.dilate((np_grid), dilated_kernel, iterations = dilate_width))
+        return dilated_grid
+
+    def bresenham_line(self, p0, p1):
+        """Yield integer coordinates on the line from p0 to p1"""
+        x0, y0 = p0
+        x1, y1 = p1
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        x, y = x0, y0
+        sx = -1 if x0 > x1 else 1
+        sy = -1 if y0 > y1 else 1
+        if dx > dy:
+            err = dx / 2.0
+            while x != x1:
+                yield (x, y)
+                err -= dy
+                if err < 0:
+                    y += sy
+                    err += dx
+                x += sx
+        else:
+            err = dy / 2.0
+            while y != y1:
+                yield (x, y)
+                err -= dx
+                if err < 0:
+                    x += sx
+                    err += dy
+                y += sy
+        yield (x1, y1)
+
+    def clean_up_path(self, occupancy_grid, path):
+        if not path or len(path) < 3:
+            return path
+
+        new_path = [path[0]]  # Always start with the first node
+        last_added = path[0]
+
+        for i in range(1, len(path)):
+            line = list(self.bresenham_line(last_added, path[i]))
+            print(path[i],":")
+            print("line",line)
+            print()
+
+            if any(occupancy_grid[p] == 1 for p in line):
+                # Obstacle encountered — last safe node is path[i-1]
+                new_path.append(path[i - 1])
+                last_added = path[i - 1]
+                print("last_added:", last_added)
+
+        # Ensure goal is added
+        if new_path[-1] != path[-1]:
+            new_path.append(path[-1])
+
+        return new_path
+
     def generate_traj(self):
 
-        # generate path
-        path = self.a_star_algorithm(self.grid, (self.start_x, self.start_y), (self.goal_x, self.goal_y))
+        self.dilated_occupancy_grid = self.dilate_grid(self.occupancy_grid, 2)
+        # Run A* algorithm
+        raw_path = self.a_star_algorithm(self.dilated_occupancy_grid, self.start, self.goal)
+        self.smooth_path = None
+        if(raw_path != None):
+            self.smooth_path = self.clean_up_path(self.dilated_occupancy_grid, raw_path)
 
         # if no path found
-        if(path == None):
+        if(self.smooth_path == None):
             return None
 
         # translate path into path message
@@ -144,7 +200,7 @@ class pathPlanner(Node):
         path_msg.header.stamp = self.get_clock().now().to_msg()
         path_msg.header.frame_id = "robot_center_frame"
         
-        for (x, y) in path:
+        for (x, y) in self.smooth_path:
             pose = PoseStamped()
             pose.header = path_msg.header
             # set path points at the center of the grids

@@ -14,6 +14,9 @@ import random
 import math
 from threading import Lock
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from scipy.spatial.transform import Rotation as R
+import pytorch_kinematics as pk
+import torch
 
 
 class ArmTrajectoryPlanner(Node):
@@ -34,6 +37,8 @@ class ArmTrajectoryPlanner(Node):
         # Joint limits
         self.joint_limits = None
 
+        self.num_joints = 6
+
         # Hard-coded velocity and acceleration limits
         # These will be properly assigned to joint names from URDF later
         self.joint_velocity_limits = {}  # rad/s
@@ -49,7 +54,7 @@ class ArmTrajectoryPlanner(Node):
         # Subscribers
         self.joint_state_sub = self.create_subscription(
             JointState,
-            "/joint_state",
+            "/joint_states",
             self.joint_state_callback,
             10,
             callback_group=self.callback_group,
@@ -85,17 +90,16 @@ class ArmTrajectoryPlanner(Node):
 
         self.test_pose_sent = False
 
+        self.chain = None
+
         self.get_logger().info("Arm Trajectory Planner initialized")
+
+        self.target_pose_test_timer = self.create_timer(3.0, self.send_test_pose)
 
     def joint_state_callback(self, msg):
         with self.joint_state_lock:
             self.current_joint_state = msg
             self.get_logger().debug(f"Received joint state: {msg.position}")
-
-            if not self.test_pose_sent:
-                # Now we'll publish a test pose
-                self.send_test_pose()
-                self.test_pose_sent = True
 
     def send_test_pose(self):
         test_pose = Pose()
@@ -114,6 +118,11 @@ class ArmTrajectoryPlanner(Node):
         self.robot_description = msg.data
         self.parse_robot_description()
         self.get_logger().info("Received robot description")
+
+        # Create a chain for pytorch_kinematics
+        chain = pk.build_chain_from_urdf(msg.data)
+        self.chain = pk.SerialChain(chain, "link_eef", "arm_link")
+        self.chain.print_tree()
 
         # Now we'll publish a test pose
         self.send_test_pose()
@@ -207,6 +216,19 @@ class ArmTrajectoryPlanner(Node):
         # Default small box if no geometry is specified
         return [-0.05, -0.05, -0.05, 0.05, 0.05, 0.05]
 
+    def extract_joint_positions(self, msg: JointState):
+        """
+        Extract joint positions from a JointState message
+
+        Only consider joints with "joint" in their name, e.g. "joint1", "joint2"
+        """
+        joint_positions = [0.0] * self.num_joints
+        for i, name in enumerate(msg.name):
+            if name[:5] == "joint":
+                joint_number = int(name.replace("joint", ""))
+                joint_positions[joint_number - 1] = msg.position[i]
+        return joint_positions
+
     def plan_and_execute_trajectory(self, target_pose):
         self.get_logger().info("Planning trajectory...")
 
@@ -215,7 +237,10 @@ class ArmTrajectoryPlanner(Node):
             if self.current_joint_state is None:
                 self.get_logger().error("No joint state available")
                 return
-            start_state = list(self.current_joint_state.position)
+
+            start_state = self.extract_joint_positions(self.current_joint_state)
+            print(f"Start state: {start_state}")
+            # start_state = list(self.current_joint_state.position)
 
         # Convert target pose to joint space (inverse kinematics)
         self.get_logger().info(
@@ -243,20 +268,62 @@ class ArmTrajectoryPlanner(Node):
         # Execute trajectory
         self.execute_trajectory(smooth_trajectory)
 
-    def inverse_kinematics(self, target_pose):
+    def inverse_kinematics(self, pose: Pose, max_iters: int = 300) -> list[float]:
         """
-        Placeholder for inverse kinematics calculation
-        In a real implementation, this would compute the joint angles
-        that achieve the target pose using an IK solver
-        """
-        # For demonstration, return a random valid configuration
-        # that would be close to the target pose
-        random_config = []
-        for joint_name in self.joint_limits:
-            lower, upper = self.joint_limits[joint_name]
-            random_config.append(lower + (upper - lower) * random.random())
+        Calculate the inverse kinematics for a given pose using Jacobian pseudoinverse
 
-        return random_config
+        Args:
+            pose: Target pose in link_base (robot base) coordinates
+            initial_guess: Initial guess for the joint configuration
+
+        Returns:
+            List of joint angles that achieve the target pose
+        """
+
+        if self.chain is None:
+            self.get_logger().error("No chain available for inverse kinematics")
+            return None
+
+        # Extract position and orientation from the pose
+        x = pose.position.x
+        y = pose.position.y
+        z = pose.position.z
+
+        quaternion = [
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+            pose.orientation.w,
+        ]
+
+        # from_quat is scalar-last by default
+        roll, pitch, yaw = (
+            R.from_quat(quaternion).as_euler("xyz", degrees=False).tolist()
+        )
+
+        lim = torch.tensor(self.chain.get_limits())
+
+        ik = pk.PseudoInverseIK(
+            self.chain,
+            max_iterations=max_iters,
+            num_retries=10,
+            joint_limits=lim.T,
+            early_stopping_any_converged=True,
+            early_stopping_no_improvement="all",
+            debug=False,
+            lr=0.2,
+        )
+
+        goal_in_arm_link_frame = pk.Transform3d(pos=[x, y, z], rot=[roll, pitch, yaw])
+
+        sol = ik.solve(goal_in_arm_link_frame)
+
+        print(sol.solutions)
+        # num goals x num retries can check for the convergence of each run
+        print(sol.converged)
+        # num goals x num retries can look at errors directly
+        print(sol.err_pos)
+        print(sol.err_rot)
 
     def plan_rrt_star(
         self,
@@ -496,42 +563,23 @@ class ArmTrajectoryPlanner(Node):
 
         return False
 
-    def forward_kinematics(self, joint_state):
+    def forward_kinematics(self, joints: np.ndarray) -> np.ndarray:
         """
-        Perform forward kinematics to get the positions of all links
+        Computes the forward kinematics for the given joint angles
 
-        This is a simplified approach - in a real implementation, you would
-        use a proper kinematics library
-
+        Args:
+            joints: Joint angles of length num_joints
         Returns:
-            List of link bounding boxes in world coordinates
+            A homogenous transformation matrix representing the end-effector pose
         """
-        # Placeholder for forward kinematics
-        # In a real implementation, this would compute the actual link positions
-        # based on the joint state and the robot kinematics
 
-        link_positions = []
+        if self.chain is None:
+            self.get_logger().error("No chain available for forward kinematics")
+            return None
 
-        # Simplified model: assume a chain of links along the z-axis
-        current_pos = [0, 0, 0]
-        for i, angle in enumerate(joint_state):
-            # Update position based on joint angle
-            current_pos[0] += 0.1 * math.cos(angle)
-            current_pos[1] += 0.1 * math.sin(angle)
-            current_pos[2] += 0.1
+        m = self.chain.forward_kinematics(joints).get_matrix()
 
-            # Create a bounding box for this link
-            bbox = [
-                current_pos[0] - 0.05,
-                current_pos[1] - 0.05,
-                current_pos[2] - 0.05,
-                current_pos[0] + 0.05,
-                current_pos[1] + 0.05,
-                current_pos[2] + 0.05,
-            ]
-            link_positions.append(bbox)
-
-        return link_positions
+        return m
 
     def check_bbox_collision(self, bbox1, bbox2):
         """Check if two bounding boxes collide"""

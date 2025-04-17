@@ -170,6 +170,28 @@
         <child link="arm_link" />
     </joint>
 
-    <xacro:xarm_device dof="6" attach_to="arm_link" add_gripper="true" />
+    <xacro:xarm_device dof="6" attach_to="arm_link" add_gripper="false" />
+
+    <link name="gripper_link">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <mesh filename="package://johnny_description/meshes/multi_eef.obj" />
+            </geometry>
+            <material name="light_grey" />
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <mesh filename="package://johnny_description/meshes/multi_eef_collision.obj" />
+            </geometry>
+        </collision>
+    </link>
+    <joint name="gripper_link_joint" type="fixed">
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <parent link="link_eef" />
+        <child link="gripper_link" />
+
+    </joint>
 
 </robot>

@@ -172,7 +172,7 @@
 
     <xacro:xarm_device dof="6" attach_to="arm_link" add_gripper="false" />
 
-    <link name="gripper_link">
+    <link name="multi_eef_link">
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
@@ -187,11 +187,19 @@
             </geometry>
         </collision>
     </link>
-    <joint name="gripper_link_joint" type="fixed">
+    <joint name="multi_eef_joint" type="fixed">
         <origin xyz="0 0 0" rpy="0 0 0" />
         <parent link="link_eef" />
-        <child link="gripper_link" />
+        <child link="multi_eef_link" />
+    </joint>
 
+    <link name="gripper_link">
+
+    </link>
+    <joint name="gripper_joint" type="fixed">
+        <origin xyz="-0.139 0 0.125" rpy="0 ${-PI/3} 0" />
+        <parent link="multi_eef_link" />
+        <child link="gripper_link" />
     </joint>
 
 </robot>

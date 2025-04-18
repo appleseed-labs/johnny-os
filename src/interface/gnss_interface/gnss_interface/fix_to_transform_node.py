@@ -144,12 +144,16 @@ class FixToTransformNode(Node):
         Args:
             msg (GPSFix): _description_
         """
-        # if msg.status.status < 0:
-        #     self.get_logger().warn("No valid GPS fix")
-        #     return
+        if msg.status.status < 0:
+            self.get_logger().warn("No valid GPS fix")
+            return
 
         # Convert lat/lon to local x/y in meters
-        utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
+        utm_x, utm_y, _, __ = utm.from_latlon(
+            msg.latitude, msg.longitude, 17, None, True
+        )
+        # utm_x = msg.latitude
+        # utm_y = msg.longitude
         # NOTE: Rohan fix (Get the initial origin of the robot)
         if self.origin_utm_x is None and self.origin_utm_y is None:
             self.origin_utm_x = utm_x
@@ -186,7 +190,7 @@ class FixToTransformNode(Node):
 
         self.odom_pub.publish(odom_msg)
         self.get_logger().info(
-            f"Published Odom: x={local_x:.2f}, y={local_y:.2f}, yaw={yaw_deg:.2f}°"
+            f"Published Odom: x={local_x:.12f}, y={local_y:.12f}, yaw={yaw_deg:.2f}°"
         )
 
     def publish_transform(self, tf_broadcaster, x, y, z, child_frame):

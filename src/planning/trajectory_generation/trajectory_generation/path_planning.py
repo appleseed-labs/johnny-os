@@ -19,14 +19,11 @@ class pathPlanner(Node):
     # publish rate
     RATE = 100
     
-    occupancy_grid = ""
-    grid = [[0]]
+    occupancy_grid = None
+    grid = None
     resolution = 0
     start_x = 0
     start_y = 0
-
-
-
     goal_x = 0
     goal_y = 0
 
@@ -183,10 +180,12 @@ class pathPlanner(Node):
         return new_path
 
     def generate_traj(self):
+        if self.grid is None:
+            return
 
-        self.dilated_occupancy_grid = self.dilate_grid(self.occupancy_grid, 2)
+        self.dilated_occupancy_grid = self.dilate_grid(self.grid, 2)
         # Run A* algorithm
-        raw_path = self.a_star_algorithm(self.dilated_occupancy_grid, self.start, self.goal)
+        raw_path = self.a_star_algorithm(self.dilated_occupancy_grid, (self.start_x, self.start_y), (self.goal_x, self.goal_y))
         self.smooth_path = None
         if(raw_path != None):
             self.smooth_path = self.clean_up_path(self.dilated_occupancy_grid, raw_path)

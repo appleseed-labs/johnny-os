@@ -21,6 +21,7 @@ setup(
         "console_scripts": [
             f"planner = {package_name}.planner:main",
             f"twist_tester = {package_name}.twist_tester:main",
+            f"simple_goal_follower = {package_name}.simple_goal_follower:main",
         ],
     },
 )

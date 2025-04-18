@@ -4,6 +4,7 @@
 # (c) 2025 Appleseed Labs. CMU Robotics Institute
 # -----------------------------------------------------------------------------
 
+from sympy import N
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PoseStamped
@@ -11,7 +12,7 @@ from nav_msgs.msg import Path
 from sensor_msgs.msg import NavSatFix
 from sensor_msgs.msg import Imu
 from scipy.spatial.transform import Rotation as R
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32
 import math, time
 import numpy as np
 from tf2_ros import TransformException
@@ -34,6 +35,7 @@ class MotionController(Node):
 
         # Subscribers
         self.create_subscription(Path, "/planning/path", self.pathCb, 10)
+        self.create_subscription(Float32, "/yaw_float", self.yawFloat, 10)
 
         # For looking up the robot's position on the map
         self.tf_buffer = Buffer()
@@ -82,7 +84,9 @@ class MotionController(Node):
             transformed_pose = PoseStamped()
             transformed_pose.header.stamp = pose_msg.header.stamp
             transformed_pose.header.frame_id = target_frame
-            transformed_pose.pose = do_transform_pose(pose_msg.pose, t)
+            transformed_pose.pose.position.x = t.transform.translation.x
+            transformed_pose.pose.position.y = t.transform.translation.y
+            # transformed_pose.pose = do_transform_pose(pose_msg.pose, t)
             self.get_logger().info(f"{transformed_pose.pose.position}")
             return transformed_pose
         except TransformException as ex:
@@ -94,11 +98,11 @@ class MotionController(Node):
         poses = msg.poses
         # Get the needed x, y tuples for waypoints
         for pose_stamped in poses:
-            if pose_stamped.header.frame_id != "base_link":
-                # Transform the pose to the ego frame
-                pose_stamped = self.transformPose(pose_stamped, "base_link")
-                if pose_stamped is None:
-                    continue
+            # if pose_stamped.header.frame_id != "base_link":
+            #     # Transform the pose to the ego frame
+            #     pose_stamped = self.transformPose(pose_stamped, "base_link")
+            #     if pose_stamped is None:
+            #         continue
             pose = pose_stamped.pose
             loc_tuple = (pose.position.x, pose.position.y)
             self.waypoints.append(loc_tuple)
@@ -205,7 +209,7 @@ class MotionController(Node):
         # Stop if close to goal
         self.get_logger().info("Goal reached!")
         self.get_logger().info(f"Currently at: ({self.ego_x}, {self.ego_y})")
-        self.get_logger().info(f"In map coordinates at: ({self.map_x}, {self.map_y})")
+        # self.get_logger().info(f"In map coordinates at: ({self.map_x}, {self.map_y})")
         self.reset()
         # Send signal to let waypoint node that we can accept more waypoints
         self.controller_signal_publisher.publish(Bool(data=True))
@@ -213,6 +217,13 @@ class MotionController(Node):
     def reset(self):
         """Resets key values and the robot"""
         twist_msg = Twist()
+        # To help reset the yaw, we must run the robot for like 2 seconds in forward
+        twist_msg.linear.x = 1.0
+        twist_msg.angular.z = 0.0
+        self.twist_publisher.publish(twist_msg)
+        self.get_logger().info("HEre iun the code")
+        time.sleep(2)
+        # Stop the robot
         twist_msg.linear.x = 0.0
         twist_msg.angular.z = 0.0
         self.twist_publisher.publish(twist_msg)
@@ -283,16 +294,20 @@ class MotionController(Node):
                 min_dist = distance
                 # self.get_logger().info(f"Distance: {distance}\n")
                 # self.get_logger().info(f"Formula: {max(0.1, min(2.0, distance))}\n")
-                best_lookahead = max(0.4, distance)  # Adjust dynamically
+                best_lookahead = max(0.8, distance)  # Adjust dynamically
 
         self.get_logger().info(f"Adaptive lookahead distance: {best_lookahead}")
         return best_lookahead
+
+    def yawFloat(self, msg):
+        self.get_logger().info(f"Got yaw {self.ego_yaw}")
+        self.ego_yaw = msg.data
 
     def spinController(self):
         """Compute and publish velocity commands using Pure Pursuit."""
         # return
         # No waypoints recieved
-        if len(self.waypoints) == 0:
+        if len(self.waypoints) == 0 or self.ego_yaw is None:
             # self.get_logger().warning(
             #     "No waypoints received yet. Skipping control loop."
             # )
@@ -305,24 +320,24 @@ class MotionController(Node):
                 self.init_robot_x = t.transform.translation.x
                 self.init_robot_y = t.transform.translation.y
 
-            self.map_x = t.transform.translation.x
-            self.map_y = t.transform.translation.y
+            # self.map_x = t.transform.translation.x
+            # self.map_y = t.transform.translation.y
 
-            self.ego_x = t.transform.translation.x - self.init_robot_x
-            self.ego_y = t.transform.translation.y - self.init_robot_y
-            self.ego_yaw = R.from_quat(
-                [
-                    t.transform.rotation.x,
-                    t.transform.rotation.y,
-                    t.transform.rotation.z,
-                    t.transform.rotation.w,
-                ]
-            ).as_euler("xyz")[2]
+            self.ego_x = t.transform.translation.x
+            self.ego_y = t.transform.translation.y
+            # self.ego_yaw = R.from_quat(
+            # [
+            #         t.transform.rotation.x,
+            #         t.transform.rotation.y,
+            #         t.transform.rotation.z,
+            #         t.transform.rotation.w,
+            #     ]
+            # ).as_euler("xyz")[2]
             self.get_logger().info(f"Loc: {self.ego_x}, {self.ego_y}")
-            self.get_logger().info(
-                f"In map coordinates at: ({self.map_x}, {self.map_y})"
-            )
-            # self.get_logger().info(f"Yaw: {self.ego_yaw}")
+            # self.get_logger().info(
+            #     f"In map coordinates at: ({self.map_x}, {self.map_y})"
+            # )
+            self.get_logger().info(f"Yaw: {self.ego_yaw}")
         except TransformException as ex:
             self.get_logger().warning(
                 f"Could not find ego transform. Skipping control loop: {ex}"
@@ -334,6 +349,8 @@ class MotionController(Node):
             (self.waypoints[-1][0] - self.ego_x) ** 2
             + (self.waypoints[-1][1] - self.ego_y) ** 2
         )
+
+        # self.get_logger().info(f"Our endpoiunt: {self.waypoints[-1][0]}, {self.waypoints[-1][1]}")
 
         # Stop if close to goal
         # TODO: Parameterize this distance threshold

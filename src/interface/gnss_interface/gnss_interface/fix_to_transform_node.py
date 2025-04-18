@@ -115,32 +115,16 @@ class FixToTransformNode(Node):
         self.tf_broadcaster.sendTransform(t)
 
         self.odom_pub.publish(odom_msg)
-        self.yaw_pub.publish(Float32(data=yaw))
+        # self.yaw_pub.publish(Float32(data=yaw))
+        
+        self.get_logger().info(
+            f"Published Odom: x={ego_x:.12f}, y={ego_x:.12f}, yaw={yaw:.2f}°"
+        )
 
     def fixCb(self, msg: NavSatFix):
         # Convert to UTM
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
-        # NOTE: Rohan fix (Get the initial origin of the robot)
-        if self.origin_utm_robot_x is None and self.origin_utm_robot_y is None:
-            self.origin_utm_robot_x = utm_x
-            self.origin_utm_robot_y = utm_y
-
-            # Publish the robot_origin transform message
-            self.publish_transform(
-                self.tf_broadcaster, utm_x, utm_y, 0.0, "robot_origin"
-            )
-
-            # self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
-            self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
-
-        # Publish the robot's current loc relative to where it started out at
-        x_loc_rob = utm_x - self.origin_utm_robot_x
-        y_loc_rob = utm_y - self.origin_utm_robot_y
-        # Publish the robot transform message
-        self.publish_transform(
-            self.tf_broadcaster, x_loc_rob, y_loc_rob, 0.0, "robot_position"
-        )
-
+    
         # Calculate the position relative to the map origin
         x = utm_x - self.origin_utm_x
         y = utm_y - self.origin_utm_y

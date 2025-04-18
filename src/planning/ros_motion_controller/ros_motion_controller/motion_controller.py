@@ -28,9 +28,6 @@ class MotionController(Node):
 
         # Publishers
         self.twist_publisher = self.create_publisher(Twist, "cmd_vel", 10)
-        self.controller_signal_publisher = self.create_publisher(
-            Bool, "/controller_signal", 10
-        )
 
         # Subscribers
         self.create_subscription(Path, "/planning/path", self.pathCb, 10)
@@ -46,7 +43,7 @@ class MotionController(Node):
         self.ego_y = None
         self.ego_yaw = None
 
-        # To see the current map coordinates
+        # To see the current map coordinates (simply to know where the robot is at in the map)
         self.map_x = None
         self.map_y = None
 
@@ -58,9 +55,6 @@ class MotionController(Node):
         self.lookahead_not_found_counter = 0
         # Initilize timer for control loop
         self.timer = self.create_timer(0.1, self.spinController)
-
-        # NOTE: This is for testing purposes
-        # self.controller_signal_publisher.publish(Bool(data=True))
 
     def transformPose(self, pose_msg: PoseStamped, target_frame: str):
         """Transform a PoseStamped message to a target frame
@@ -207,8 +201,6 @@ class MotionController(Node):
         self.get_logger().info(f"Currently at: ({self.ego_x}, {self.ego_y})")
         self.get_logger().info(f"In map coordinates at: ({self.map_x}, {self.map_y})")
         self.reset()
-        # Send signal to let waypoint node that we can accept more waypoints
-        self.controller_signal_publisher.publish(Bool(data=True))
 
     def reset(self):
         """Resets key values and the robot"""

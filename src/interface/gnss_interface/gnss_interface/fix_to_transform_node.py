@@ -31,6 +31,9 @@ class FixToTransformNode(Node):
         self.setUpParameters()
 
         self.create_subscription(NavSatFix, "/gnss/fix", self.fixCb, 1)  # For position
+        # self.create_subscription(
+        #     GPSFix, "/gpsfix", self.gps_callback, 1
+        # )  # For position
         self.create_subscription(Imu, "/imu", self.imuCb, 1)  # For orientation
 
         self.odom_pub = self.create_publisher(Odometry, "/gnss/odom", 1)
@@ -46,6 +49,10 @@ class FixToTransformNode(Node):
         lat0, lon0, alt0 = self.get_parameter("map_origin_lat_lon_alt_degrees").value
         self.origin_utm_x, self.origin_utm_y, _, __ = utm.from_latlon(lat0, lon0)
         self.origin_z = alt0
+
+        # NOTE: Rohan fix
+        self.origin_utm_robot_x = None
+        self.origin_utm_robot_y = None
 
     def imuCb(self, msg: Imu):
         # Check for valid quaternion
@@ -113,8 +120,28 @@ class FixToTransformNode(Node):
     def fixCb(self, msg: NavSatFix):
         # Convert to UTM
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
+        # NOTE: Rohan fix (Get the initial origin of the robot)
+        if self.origin_utm_robot_x is None and self.origin_utm_robot_y is None:
+            self.origin_utm_robot_x = utm_x
+            self.origin_utm_robot_y = utm_y
 
-        # Calculate the position relative to the origin
+            # Publish the robot_origin transform message
+            self.publish_transform(
+                self.tf_broadcaster, utm_x, utm_y, 0.0, "robot_origin"
+            )
+
+            # self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
+            self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
+
+        # Publish the robot's current loc relative to where it started out at
+        x_loc_rob = utm_x - self.origin_utm_robot_x
+        y_loc_rob = utm_y - self.origin_utm_robot_y
+        # Publish the robot transform message
+        self.publish_transform(
+            self.tf_broadcaster, x_loc_rob, y_loc_rob, 0.0, "robot_position"
+        )
+
+        # Calculate the position relative to the map origin
         x = utm_x - self.origin_utm_x
         y = utm_y - self.origin_utm_y
 
@@ -124,10 +151,12 @@ class FixToTransformNode(Node):
         t.child_frame_id = "base_link"
         t.transform.translation.x = x
         t.transform.translation.y = y
-        # t.transform.translation.z = msg.altitude - self.origin_z
 
-        # Here we use the planar assumption, that z is zero. Big assumption,
-        # but it simplifies things greatly!
+        # NOTE: We assume that z is zero, which makes downstream algorithms much easier
+        # This is an okay assumption for a UGV when considering global features.
+        # We can leverage local height data when processing relative sensor data, e.g.
+        # lidar, camera, etc. WSH.
+        # t.transform.translation.z = msg.altitude - self.origin_z
         t.transform.translation.z = 0.0
 
         # Set the orientation (yaw) from the IMU data
@@ -150,6 +179,90 @@ class FixToTransformNode(Node):
         odom.pose.pose.position.z = msg.altitude - self.origin_z
         odom.pose.pose.orientation = t.transform.rotation
         self.odom_pub.publish(odom)
+
+    # def gps_callback(self, msg: GPSFix):
+    #     """Callback for SwiftnavROS2 to get GPSFix and convert it to odometry message
+
+    #     Args:
+    #         msg (GPSFix): _description_
+    #     """
+    #     if msg.status.status < 0:
+    #         self.get_logger().warn("No valid GPS fix")
+    #         return
+
+    #     # Convert lat/lon to local x/y in meters
+    #     utm_x, utm_y, _, __ = utm.from_latlon(
+    #         msg.latitude, msg.longitude, 17, None, True
+    #     )
+    #     # utm_x = msg.latitude
+    #     # utm_y = msg.longitude
+    #     # NOTE: Rohan fix (Get the initial origin of the robot)
+    #     if self.origin_utm_robot_x is None and self.origin_utm_robot_x is None:
+    #         self.origin_utm_robot_x = utm_x
+    #         self.origin_utm_robot_x = utm_y
+
+    #         # Publish the robot_origin transform message
+    #         self.publish_transform(
+    #             self.tf_broadcaster, utm_x, utm_y, 0.0, "robot_origin"
+    #         )
+
+    #         # self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
+    #         self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
+
+    #     local_x = utm_x - self.origin_utm_x
+    #     local_y = utm_y - self.origin_utm_y
+
+    #     # Convert track (degrees from north) to yaw in radians
+    #     yaw_deg = msg.track
+    #     self.yaw_enu = math.radians(yaw_deg)
+
+    #     quat = R.from_euler("z", self.yaw_enu, degrees=False).as_quat()
+
+    #     # Create Odom message
+    #     odom_msg = Odometry()
+    #     odom_msg.header = self.getHeader()
+    #     odom_msg.child_frame_id = "base_link"
+
+    #     odom_msg.pose.pose.position.x = local_x
+    #     odom_msg.pose.pose.position.y = local_y
+    #     odom_msg.pose.pose.position.z = msg.altitude
+    #     odom_msg.pose.pose.orientation = Quaternion(
+    #         x=quat[0], y=quat[1], z=quat[2], w=quat[3]
+    #     )
+
+    #     self.odom_pub.publish(odom_msg)
+    #     self.get_logger().info(
+    #         f"Published Odom: x={local_x:.12f}, y={local_y:.12f}, yaw={yaw_deg:.2f}°"
+    #     )
+
+    def publish_transform(self, tf_broadcaster, x, y, z, child_frame):
+        """Publishes a transform via tf_broadcaster"""
+        t = TransformStamped()
+        t.header = self.getHeader()
+        t.child_frame_id = child_frame
+
+        # Set translation
+        t.transform.translation.x = x
+        t.transform.translation.y = y
+        t.transform.translation.z = z
+        try:
+            # Convert Euler angles to quaternion
+            if self.yaw_enu is not None:
+                q = R.from_euler("z", self.yaw_enu, degrees=False).as_quat()
+                t.transform.rotation.x = q[0]
+                t.transform.rotation.y = q[1]
+                t.transform.rotation.z = q[2]
+                t.transform.rotation.w = q[3]
+            else:
+                # Publish a 0 for the yaw then
+                t.transform.rotation.x = 0.0
+                t.transform.rotation.y = 0.0
+                t.transform.rotation.z = 0.0
+                t.transform.rotation.w = 0.0
+            # Broadcast the transform
+            tf_broadcaster.sendTransform(t)
+        except:
+            self.get_logger().warn(f"Could not publish the transform for {child_frame}")
 
     def getHeader(self):
         msg = Header()

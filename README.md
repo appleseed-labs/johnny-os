@@ -17,8 +17,8 @@ $ git submodule update --init --remote --recursive
 $ pip install pre-commit  # If not already installed
 $ pre-commit install      # Now checks will run automatically at git commit
 
-# Install any dependencies with rosdep
-$ rosdep update && rosdep install --from-paths src --ignore-src -r
+# Install any dependencies with rosdep (you may need to run "sudo rosdep init" first)
+$ rosdep update && rosdep install --from-paths src --ignore-src -r -y
 
 $ colcon build  # Build with colcon
 $ . install/setup.bash  # Source your workspace

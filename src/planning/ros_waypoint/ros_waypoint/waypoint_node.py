@@ -9,6 +9,7 @@ import random
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
+from tf2_geometry_msgs import do_transform_pose
 import casadi
 from scipy.spatial.transform import Rotation as R
 import time
@@ -581,18 +582,72 @@ class WayPointController(Node):
             ]
         )
 
-    def goalPoseCb(self, msg: PoseStamped):
-        """Contruct a Dubbins path from the current ego pose to the goal pose
+        # Initial pose of robot
+        self.init_robot_x = None
+        self.init_robot_y = None
 
+        self.latest_path = None
+        
+        self.goal_pose = (-1.2, -343.0) # in m
+
+    def transformPose(self, pose_msg: PoseStamped, target_frame: str):
+        """Transform a PoseStamped message to a target frame
         Args:
-            msg (PoseStamped): The goal pose
+            pose_msg (PoseStamped): The pose to transform
+            target_frame (str): The target frame to transform to
+        Returns:
+            PoseStamped: The transformed pose
         """
+        if pose_msg.header.frame_id == target_frame:
+            return pose_msg
 
         try:
             # Get the latest transform from map to base_link
+            t = self.tf_buffer.lookup_transform(
+                target_frame, pose_msg.header.frame_id, rclpy.time.Time()
+            )
+            # Make shallow copy of pose_msg
+            transformed_pose = PoseStamped()
+            transformed_pose.header.stamp = pose_msg.header.stamp
+            transformed_pose.header.frame_id = target_frame
+            transformed_pose.pose = do_transform_pose(pose_msg.pose, t)
+            return transformed_pose
+        except TransformException as ex:
+            self.get_logger().warning(f"Could not transform pose: {ex}")
+            return None
+        
+    def forward_random_path(start, end, steps=10, noise_scale=0.5):
+        """A helper function to generate random path from the start to end with random side deviations
+        """
+        start = np.array(start, dtype=float)
+        end = np.array(end, dtype=float)
+        path = [start]
+
+        for i in range(1, steps - 1):
+            t = i / steps  # progress from 0 to 1
+
+            # Compute target point at this step on straight line
+            target = start + t * (end - start)
+
+            # Add noise around the target
+            random_offset = np.random.randn(2) * noise_scale
+            point = target + random_offset
+
+            path.append(point)
+
+        path.append(end)
+        return np.array(path)
+    
+    def goalPoseCB(self, msg: PoseStamped):
+        """
+        Construct a random part to the goal pose
+        """
+        try:
+            # Get the latest transform from map to base_link
             t = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
-            self.ego_x = t.transform.translation.x
-            self.ego_y = t.transform.translation.y
+
+            self.ego_x = t.transform.translation.x  
+            self.ego_y = t.transform.translation.y  
             self.ego_yaw = R.from_quat(
                 [
                     t.transform.rotation.x,
@@ -607,38 +662,9 @@ class WayPointController(Node):
                 f"Could not find ego transform. Skipping path generation: {ex}"
             )
             return
-
-        goal_yaw = R.from_quat(
-            [
-                msg.pose.orientation.x,
-                msg.pose.orientation.y,
-                msg.pose.orientation.z,
-                msg.pose.orientation.w,
-            ]
-        ).as_euler("xyz")[2]
-
-        print(f"Ego Pose: ({self.ego_x}, {self.ego_y}), Yaw: {self.ego_yaw}")
-        print(
-            f"Goal Pose: ({msg.pose.position.x}, {msg.pose.position.y}), Yaw: {goal_yaw}"
-        )
-
-        assert msg.header.frame_id == "map", "Goal pose must be in the map frame"
-
-        shortest_path, min_length = getShortestDubbinsPath(
-            radius=5.0,
-            start_x=self.ego_x,
-            start_y=self.ego_y,
-            start_yaw=self.ego_yaw,
-            end_x=msg.pose.position.x,
-            end_y=msg.pose.position.y,
-            end_yaw=goal_yaw,
-            resolution_meters=0.01,
-        )
-
-        final_path = trimPath(
-            shortest_path, goal_x=-5, goal_y=-10, distance_threshold=0.1
-        )
-
+        #Randomly selects points from the start to the end
+        final_path = self.forward_random_path((self.ego_x, self.ego_y), self.goal_pose, 10)
+        
         path_msg = Path()
         path_msg.header.stamp = self.get_clock().now().to_msg()
         path_msg.header.frame_id = "map"
@@ -653,53 +679,124 @@ class WayPointController(Node):
             path_msg.poses.append(pose)
 
         self.path_publisher.publish(path_msg)
+
+        # Cache this for later
+        self.latest_path = path_msg
+
         self.get_logger().info(f"Published path with {len(final_path)} points")
+        
+            
+
+    # def goalPoseCb(self, msg: PoseStamped):
+    #     """Contruct a Dubbins path from the current ego pose to the goal pose
+
+    #     Args:
+    #         msg (PoseStamped): The goal pose
+    #     """
+
+    #     try:
+    #         # Get the latest transform from map to base_link
+    #         t = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
+    #         # if self.init_robot_x is None or self.init_robot_y is None:
+    #         #     # To help get the robot starting position as 0,0
+    #         #     self.init_robot_x = t.transform.translation.x
+    #         #     self.init_robot_y = t.transform.translation.y
+
+    #         self.ego_x = t.transform.translation.x  # Try this or 0.0
+    #         self.ego_y = t.transform.translation.y  # Loook right above
+    #         self.ego_yaw = R.from_quat(
+    #             [
+    #                 t.transform.rotation.x,
+    #                 t.transform.rotation.y,
+    #                 t.transform.rotation.z,
+    #                 t.transform.rotation.w,
+    #             ]
+    #         ).as_euler("xyz")[2]
+
+    #     except TransformException as ex:
+    #         self.get_logger().warning(
+    #             f"Could not find ego transform. Skipping path generation: {ex}"
+    #         )
+    #         return
+
+    #     # Transform goal pose to map frame if necessary
+    #     msg = self.transformPose(msg, "map")
+    #     if msg is None:
+    #         self.get_logger().warning("Could not transform goal pose")
+    #         return
+
+    #     goal_yaw = R.from_quat(
+    #         [
+    #             msg.pose.orientation.x,
+    #             msg.pose.orientation.y,
+    #             msg.pose.orientation.z,
+    #             msg.pose.orientation.w,
+    #         ]
+    #     ).as_euler("xyz")[2]
+
+    #     print(f"Ego Pose: ({self.ego_x}, {self.ego_y}), Yaw: {self.ego_yaw}")
+    #     print(
+    #         f"Goal Pose: ({msg.pose.position.x}, {msg.pose.position.y}), Yaw: {goal_yaw}"
+    #     )
+
+    #     assert msg.header.frame_id == "map", "Goal pose must be in the map frame"
+
+    #     shortest_path, min_length = getShortestDubbinsPath(
+    #         radius=2.0,
+    #         start_x=self.ego_x,
+    #         start_y=self.ego_y,
+    #         start_yaw=self.ego_yaw,
+    #         end_x=msg.pose.position.x,
+    #         end_y=msg.pose.position.y,
+    #         end_yaw=goal_yaw,
+    #         resolution_meters=0.01,
+    #     )
+
+    #     final_path = trimPath(
+    #         shortest_path, goal_x=-5, goal_y=-10, distance_threshold=0.1
+    #     )
+
+    #     path_msg = Path()
+    #     path_msg.header.stamp = self.get_clock().now().to_msg()
+    #     path_msg.header.frame_id = "map"
+    #     path_msg.poses = []
+    #     for point in final_path:
+    #         pose = PoseStamped()
+    #         pose.header.stamp = self.get_clock().now().to_msg()
+    #         pose.header.frame_id = "map"
+    #         pose.pose.position.x = float(point[0])
+    #         pose.pose.position.y = float(point[1])
+    #         pose.pose.position.z = 0.0  # Assume 2D navigation
+    #         path_msg.poses.append(pose)
+
+    #     self.path_publisher.publish(path_msg)
+
+    #     # Cache this for later
+    #     self.latest_path = path_msg
+
+    #     self.get_logger().info(f"Published path with {len(final_path)} points")
 
     def mc_callback(self, msg):
         """Callback to check if the motion controller is ready for waypoints"""
         # self.mc_bool = msg.data
         self.get_logger().info("We trying to send the waypoints")
-        self.send_waypoint()
+        # self.publishPath()
 
     def signal_callback(self, msg):
         """Get signal to send or not send waypoints"""
         pass
         if msg.data and self.mc_bool:
             # Send the waypoints
-            self.send_waypoint()
+            self.publishPath()
             self.mc_bool = False
 
-    def send_waypoint(self):
+    def publishPath(self):
         """Send waypoints to the motion controller"""
-        if self.waypoint_queue:
-            waypoints = self.waypoint_queue.popleft()  # FIFO order
 
-            next_waypoints = waypoints
-            next_waypoints[0][0] += random.random() * 5.0
-            next_waypoints[0][1] += random.random() * 5.0
-
-            self.waypoint_queue.append(
-                waypoints
-            )  # Re-add to the end of the queue. TODO: Remove this line.
-
-            pose_array = PoseArray()
-            pose_array.header.stamp = self.get_clock().now().to_msg()
-            pose_array.header.frame_id = "map"
-
-            # Convert waypoints to Pose objects
-            for x, y in waypoints:
-                pose = Pose()
-                self.get_logger().info(f"X: {x}, Y: {y}\n")
-                pose.position.x = float(x)
-                pose.position.y = float(y)
-                pose.position.z = 0.0  # Assume 2D navigation
-                pose_array.poses.append(pose)
-
-            # Publish the PoseArray
-            self.path_publisher.publish(pose_array)
-            self.get_logger().info(f"Published {len(waypoints)} waypoints")
-        else:
-            self.get_logger().info("No more waypoint arrays to publish")
+        if self.latest_path is None:
+            self.get_logger().warning("No path to publish")
+            return
+        self.path_publisher.publish(self.latest_path)
 
 
 def main(args=None):

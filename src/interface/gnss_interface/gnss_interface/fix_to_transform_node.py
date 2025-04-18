@@ -14,9 +14,10 @@ import utm
 
 # Messages
 from geometry_msgs.msg import TransformStamped
+from gps_msgs.msg import GPSFix
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import NavSatFix, Imu
-from std_msgs.msg import Header
+from std_msgs.msg import Header, Float32
 
 
 class FixToTransformNode(Node):
@@ -33,6 +34,8 @@ class FixToTransformNode(Node):
         self.create_subscription(Imu, "/imu", self.imuCb, 1)  # For orientation
 
         self.odom_pub = self.create_publisher(Odometry, "/gnss/odom", 1)
+
+        self.create_subscription(GPSFix, "/gps/gpsfix", self.swiftFixCb, 1)
 
         # Broadcast a map -> base_link transform
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -65,6 +68,47 @@ class FixToTransformNode(Node):
             self.yaw_enu += 2 * math.pi
 
         print(self.yaw_enu)
+
+    def swiftFixCb(self, swift_msg: GPSFix):
+        # publish as Odometry message
+
+        odom_msg = Odometry()
+        odom_msg.header.stamp = self.get_clock().now().to_msg()
+        odom_msg.header.frame_id = "map"
+        odom_msg.child_frame_id = "base_link"
+
+        ego_utm_x, ego_utm_y, _, __ = utm.from_latlon(
+            swift_msg.latitude, swift_msg.longitude
+        )
+
+        ego_x = ego_utm_x - self.origin_utm_x
+        ego_y = ego_utm_y - self.origin_utm_y
+
+        odom_msg.pose.pose.position.x = ego_x
+        odom_msg.pose.pose.position.y = ego_y
+        odom_msg.pose.pose.position.z = swift_msg.altitude
+
+        # This calculates the orientation for the entire robot.
+        # Yes, this assumes that we're on a flat plane.
+        yaw = self.trueTrackToEnuRads(swift_msg.track)
+        q = R.from_euler("xyz", [0.0, 0.0, yaw]).as_quat()
+
+        odom_msg.pose.pose.orientation.x = q[0]
+        odom_msg.pose.pose.orientation.y = q[1]
+        odom_msg.pose.pose.orientation.z = q[2]
+        odom_msg.pose.pose.orientation.w = q[3]
+
+        t = TransformStamped()
+        t.transform.translation.x = ego_x
+        t.transform.translation.y = ego_y
+        t.transform.translation.z = swift_msg.altitude
+        t.transform.rotation = odom_msg.pose.pose.orientation
+        t.header = odom_msg.header
+        t.child_frame_id = odom_msg.child_frame_id
+        self.tf_broadcaster.sendTransform(t)
+
+        self.odom_pub.publish(odom_msg)
+        self.yaw_pub.publish(Float32(data=yaw))
 
     def fixCb(self, msg: NavSatFix):
         # Convert to UTM

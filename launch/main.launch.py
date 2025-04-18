@@ -70,6 +70,26 @@ def generate_launch_description():
         parameters=[{"map_origin_lat_lon_alt_degrees": MAP_ORIGIN_LAT_LON_ALT_DEGREES}],
     )
 
+    swiftnav_interface = Node(
+        package="swiftnav_ros2_driver",
+        executable="sbp-to-ros",
+        parameters=[
+            os.path.join(
+                get_package_share_directory("swiftnav_ros2_driver"),
+                "config",
+                "settings.yaml",
+            )
+        ],
+        remappings=[
+            ("imu", "/gnss/imu"),
+            ("gpsfix", "/gnss/gpsfix"),
+            ("navsatfix", "/gnss/navsatfix"),
+            ("baseline", "/gnss/baseline"),
+            ("timereference", "/gnss/timereference"),
+            ("twistwithcovariancestamped", "/gnss/twist"),
+        ],
+    )
+
     return LaunchDescription(
         [
             # INFRASTRUCTURE
@@ -78,6 +98,7 @@ def generate_launch_description():
             # INTERFACES
             # rosbridge_server,
             unity_endpoint,
+            swiftnav_interface,
             # PERCEPTION
             # PLANNING
             fix_to_transform_node,

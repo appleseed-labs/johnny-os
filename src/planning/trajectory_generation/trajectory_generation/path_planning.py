@@ -33,7 +33,7 @@ class pathPlanner(Node):
         # subscribe to occupancy grid
         self.occupancy_grid_subscriber = self.create_subscription(
             OccupancyGrid,
-            "traj/occupancy_grid",
+            "/planning/occupancy",
             self.process_occupancy_grid,
             1
         )
@@ -41,13 +41,13 @@ class pathPlanner(Node):
         # subscribe to find the next goal position
         self.goal_position_subscriber = self.create_subscription(
             Pose,
-            "traj/goal_pose",
+            "/goal_pose",
             self.process_goal_pose,
             1
         )
 
-        # publish trajectory to "traj/local_frame_traj"
-        self.traj_publisher = self.create_publisher(Path, "traj/local_frame_traj", 1)
+        # publish trajectory to "planning/traj"
+        self.traj_publisher = self.create_publisher(Path, "planning/traj", 1)
 
         # ROS2 timer for stepping
         self.timer = self.create_timer(1.0 / self.RATE, self.step)

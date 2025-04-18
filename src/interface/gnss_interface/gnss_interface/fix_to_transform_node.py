@@ -30,10 +30,10 @@ class FixToTransformNode(Node):
 
         self.setUpParameters()
 
-        # self.create_subscription(NavSatFix, "/gnss/fix", self.fixCb, 1)  # For position
-        self.create_subscription(
-            GPSFix, "/gpsfix", self.gps_callback, 1
-        )  # For position
+        self.create_subscription(NavSatFix, "/gnss/fix", self.fixCb, 1)  # For position
+        # self.create_subscription(
+        #     GPSFix, "/gpsfix", self.gps_callback, 1
+        # )  # For position
         self.create_subscription(Imu, "/imu", self.imuCb, 1)  # For orientation
         self.mc_subscription = self.create_subscription(
             Bool, "/controller_signal", self.mc_callback, 10
@@ -48,18 +48,18 @@ class FixToTransformNode(Node):
 
         # Calculate our map origin
         lat0, lon0, alt0 = self.get_parameter("map_origin_lat_lon_alt_degrees").value
-        # self.origin_utm_x, self.origin_utm_y, _, __ = utm.from_latlon(lat0, lon0)
+        self.origin_utm_x, self.origin_utm_y, _, __ = utm.from_latlon(lat0, lon0)
         self.origin_z = alt0
 
         # NOTE: Rohan fix
-        self.origin_utm_x = None
-        self.origin_utm_y = None
+        self.origin_utm_robot_x = None
+        self.origin_utm_robot_y = None
 
     def mc_callback(self, msg: Bool):
         """Gets the signal to reset the origin of the robot"""
         if msg.data:
-            self.origin_utm_x = None
-            self.origin_utm_y = None
+            self.origin_utm_robot_x = None
+            self.origin_utm_robot_y = None
 
     def imuCb(self, msg: Imu):
         # Check for valid quaternion
@@ -87,9 +87,9 @@ class FixToTransformNode(Node):
         # Convert to UTM
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
         # NOTE: Rohan fix (Get the initial origin of the robot)
-        if self.origin_utm_x is None and self.origin_utm_y is None:
-            self.origin_utm_x = utm_x
-            self.origin_utm_y = utm_y
+        if self.origin_utm_robot_x is None and self.origin_utm_robot_y is None:
+            self.origin_utm_robot_x = utm_x
+            self.origin_utm_robot_y = utm_y
 
             # Publish the robot_origin transform message
             self.publish_transform(
@@ -99,7 +99,15 @@ class FixToTransformNode(Node):
             # self.get_logger().info(f"{msg.latitude}, {msg.longitude}")
             self.get_logger().info(f"We got origin: {utm_x}, {utm_y}")
 
-        # Calculate the position relative to the origin
+        # Publish the robot's current loc relative to where it started out at
+        x_loc_rob = utm_x - self.origin_utm_robot_x
+        y_loc_rob = utm_y - self.origin_utm_robot_y
+        # Publish the robot transform message
+        self.publish_transform(
+            self.tf_broadcaster, x_loc_rob, y_loc_rob, 0.0, "robot_position"
+        )
+
+        # Calculate the position relative to the map origin
         x = utm_x - self.origin_utm_x
         y = utm_y - self.origin_utm_y
 
@@ -155,9 +163,9 @@ class FixToTransformNode(Node):
         # utm_x = msg.latitude
         # utm_y = msg.longitude
         # NOTE: Rohan fix (Get the initial origin of the robot)
-        if self.origin_utm_x is None and self.origin_utm_y is None:
-            self.origin_utm_x = utm_x
-            self.origin_utm_y = utm_y
+        if self.origin_utm_robot_x is None and self.origin_utm_robot_x is None:
+            self.origin_utm_robot_x = utm_x
+            self.origin_utm_robot_x = utm_y
 
             # Publish the robot_origin transform message
             self.publish_transform(
@@ -203,18 +211,24 @@ class FixToTransformNode(Node):
         t.transform.translation.x = x
         t.transform.translation.y = y
         t.transform.translation.z = z
-
-        # Convert Euler angles to quaternion
-        if self.yaw_enu is not None:
-            q = R.from_euler("z", self.yaw_enu, degrees=False).as_quat()
-            t.transform.rotation.x = q[0]
-            t.transform.rotation.y = q[1]
-            t.transform.rotation.z = q[2]
-            t.transform.rotation.w = q[3]
+        try:
+            # Convert Euler angles to quaternion
+            if self.yaw_enu is not None:
+                q = R.from_euler("z", self.yaw_enu, degrees=False).as_quat()
+                t.transform.rotation.x = q[0]
+                t.transform.rotation.y = q[1]
+                t.transform.rotation.z = q[2]
+                t.transform.rotation.w = q[3]
+            else:
+                # Publish a 0 for the yaw then
+                t.transform.rotation.x = 0.0
+                t.transform.rotation.y = 0.0
+                t.transform.rotation.z = 0.0
+                t.transform.rotation.w = 0.0
             # Broadcast the transform
             tf_broadcaster.sendTransform(t)
-        else:
-            self.get_logger().warn("Could not publish the transform")
+        except:
+            self.get_logger().warn(f"Could not publish the transform for {child_frame}")
 
     def getHeader(self):
         msg = Header()

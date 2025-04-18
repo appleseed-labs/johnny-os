@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             f"arm_trajectory_planner = {package_name}.arm_trajectory_planner:main",
+            f"inverse_kinematics_tester = {package_name}.inverse_kinematics_tester:main",
         ],
     },
 )

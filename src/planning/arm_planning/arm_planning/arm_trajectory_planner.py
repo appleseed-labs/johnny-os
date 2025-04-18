@@ -15,50 +15,179 @@ import math
 from threading import Lock
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from scipy.spatial.transform import Rotation as R
-import pytorch_kinematics as pk
-import torch
+from ikpy.chain import Chain
+from ikpy.link import URDFLink
+
+# ROS messages
+from geometry_msgs.msg import Point
+
+
+class RRTStarPlanner:
+    def __init__(
+        self,
+        start,
+        goal,
+        obstacle_list,
+        bounds: list[tuple],
+        step_size=0.1,
+        neighbor_radius=0.5,
+        max_iters=5000,
+        goal_bias=0.05,
+    ):
+        self.start = self.Node(start)
+        self.goal = self.Node(goal)
+        self.obstacle_list = obstacle_list
+        self.bounds = bounds  # list of bounds [(min_x, max_y)...] for each joint
+        self.step_size = step_size
+        self.neighbor_radius = neighbor_radius
+        self.max_iters = max_iters
+        self.goal_bias = goal_bias
+        self.node_list = [self.start]
+
+    class Node:
+        def __init__(self, config):
+            self.config = config
+            self.parent = None
+            self.cost = 0.0
+
+    def plan(self):
+        for i in range(self.max_iters):
+
+            # 1. Sample a random joint configuration
+            if random.random() < self.goal_bias:
+                random_config = self.goal.config
+            else:
+                random_config = self._get_random_config()
+
+            # 2. Find the nearest neighbor in the tree
+            nearest_node = self._find_nearest_neighbor(self.node_list, random_config)
+
+            # 3. Steer towards the random configuration
+            new_config = self._steer(nearest_node.config, random_config, self.step_size)
+            new_node = self.Node(new_config)
+
+            # 4. Check for collisions
+            if not self._in_collision(nearest_node.config, new_config):
+                # 5. Add the new node to the tree
+                new_node.parent = nearest_node
+                new_node.cost = nearest_node.cost + self._distance(
+                    nearest_node.config, new_config
+                )
+
+                # 6. Rewire the tree
+                near_nodes = self._find_near_nodes(new_node)
+                for near_node in near_nodes:
+                    if (
+                        new_node.cost
+                        + self._distance(new_node.config, near_node.config)
+                        < near_node.cost
+                    ):
+                        if not self._in_collision(new_node.config, near_node.config):
+                            near_node.parent = new_node
+                            near_node.cost = new_node.cost + self._distance(
+                                new_node.config, near_node.config
+                            )
+
+                self.node_list.append(new_node)
+
+                # 7. Check if the new node is close to the goal
+                if self._distance(new_node.config, self.goal.config) < self.step_size:
+                    if not self._in_collision(new_node.config, self.goal.config):
+                        self.goal.parent = new_node
+                        self.goal.cost = new_node.cost + self._distance(
+                            new_node.config, self.goal.config
+                        )
+                        return self._reconstruct_path()
+
+        return None  # No path found
+
+    def _get_random_config(self):
+        config = []
+
+        for lower, upper in self.bounds:
+            config.append(random.uniform(lower, upper))
+
+        return tuple(config)
+
+    def _find_nearest_neighbor(self, node_list, config):
+        min_dist = float("inf")
+        nearest_node = None
+
+        for node in node_list:
+            dist = self._distance(node.config, config)
+            if dist < min_dist:
+                min_dist = dist
+                nearest_node = node
+        return nearest_node
+
+    def _steer(self, from_config, to_config, step_size):
+        direction = tuple(t - f for f, t in zip(from_config, to_config))
+
+        # Euclidean distance
+        norm = math.sqrt(sum(d**2 for d in direction))
+
+        if norm < step_size:
+            return to_config
+        else:
+            # Scale the direction vector to the step size.
+            # Add the direction vector to the from_config
+            # to get the new configuration.
+            scale = step_size / norm
+            new_config = tuple(f + d * scale for f, d in zip(from_config, direction))
+            return new_config
+
+    def _in_collision(self, config1, config2):
+
+        # 1. Perform FK to get geometry at config1 & config2
+
+        # 2. Check for collisions between the robot's links
+        # (and ideally the swept volume between config1 and config2)
+        # and the obstacles in self.obstacle_list
+
+        return False  # TODO IMPLEMENT
+
+        raise NotImplementedError("Collision checking not implemented")
+
+    def _distance(self, config1, config2):
+        return math.sqrt(sum((c1 - c2) ** 2 for c1, c2 in zip(config1, config2)))
+
+    def _find_near_nodes(self, new_node):
+        near_nodes = []
+
+        n_nodes = len(self.node_list)
+
+        # As a simple heuristic, we can adjust the radius based on the number of nodes
+        SCALING = 5.0
+        radius = min(
+            self.neighbor_radius,
+            math.sqrt(math.log(n_nodes + 1) / (n_nodes + 1)) * SCALING,
+        )
+
+        for node in self.node_list:
+            if self._distance(node.config, new_node.config) < radius:
+                near_nodes.append(node)
+        return near_nodes
+
+    def _reconstruct_path(self):
+        """
+        Traverse the tree from the goal node to the start node
+        and return the path as a list of configurations.
+        """
+        path = []
+
+        current = self.goal
+
+        while current is not None:
+            path.append(current.config)
+            current = current.parent
+
+        # Reverse the path to get it from start to goal
+        return list(reversed(path))
 
 
 class ArmTrajectoryPlanner(Node):
     def __init__(self):
         super().__init__("arm_trajectory_planner")
-
-        # Create callback group for concurrent callbacks
-        self.callback_group = ReentrantCallbackGroup()
-
-        # Current joint state
-        self.current_joint_state = None
-        self.joint_state_lock = Lock()
-
-        # Robot description (URDF)
-        self.robot_description = None
-        self.robot_model = None
-
-        # Joint limits
-        self.joint_limits = None
-
-        self.num_joints = 6
-
-        # Hard-coded velocity and acceleration limits
-        # These will be properly assigned to joint names from URDF later
-        self.joint_velocity_limits = {}  # rad/s
-        self.joint_acceleration_limits = {}  # rad/s^2
-
-        # Obstacles as 3D bounding boxes [x_min, y_min, z_min, x_max, y_max, z_max]
-        self.obstacles = [
-            [0.5, 0.5, 0.0, 0.7, 0.7, 0.5],  # Obstacle 1
-            [0.5, -0.5, 0.0, 0.7, -0.3, 0.5],  # Obstacle 2
-            [-0.5, 0.5, 0.0, -0.3, 0.7, 0.5],  # Obstacle 3
-        ]
-
-        # Subscribers
-        self.joint_state_sub = self.create_subscription(
-            JointState,
-            "/joint_states",
-            self.joint_state_callback,
-            10,
-            callback_group=self.callback_group,
-        )
 
         # QoS profile for getting the latest robot_description (transient local)
         robot_description_qos = QoSProfile(
@@ -70,640 +199,255 @@ class ArmTrajectoryPlanner(Node):
         self.robot_description_sub = self.create_subscription(
             String,
             "/robot_description",
-            self.robot_description_callback,
+            self.robot_description_cb,
             qos_profile=robot_description_qos,
-            callback_group=self.callback_group,
         )
 
-        # Subscriber for target pose
-        self.target_pose_sub = self.create_subscription(
-            Pose,
-            "/target_pose",
-            self.target_pose_callback,
+        self.joint_command_pub = self.create_publisher(
+            JointState,
+            "/joint_commands",
             10,
-            callback_group=self.callback_group,
         )
 
-        # Publisher for joint commands
-        self.joint_command_pub = self.create_publisher(JointState, "/joint_command", 10)
-        self.test_pose_pub = self.create_publisher(Pose, "/target_pose", 10)
-
-        self.test_pose_sent = False
-
-        self.chain = None
-
-        self.get_logger().info("Arm Trajectory Planner initialized")
-
-        self.target_pose_test_timer = self.create_timer(3.0, self.send_test_pose)
-
-    def joint_state_callback(self, msg):
-        with self.joint_state_lock:
-            self.current_joint_state = msg
-            self.get_logger().debug(f"Received joint state: {msg.position}")
-
-    def send_test_pose(self):
-        test_pose = Pose()
-        test_pose.position.x = 0.5
-        test_pose.position.y = 0.0
-        test_pose.position.z = 1.5
-        test_pose.orientation.x = 0.0
-        test_pose.orientation.y = 0.0
-        test_pose.orientation.z = 0.0
-        test_pose.orientation.w = 1.0
-        self.get_logger().info(f"Publishing test pose: {test_pose.position}")
-
-        self.test_pose_pub.publish(test_pose)
-
-    def robot_description_callback(self, msg):
-        self.robot_description = msg.data
-        self.parse_robot_description()
-        self.get_logger().info("Received robot description")
-
-        # Create a chain for pytorch_kinematics
-        chain = pk.build_chain_from_urdf(msg.data)
-        self.chain = pk.SerialChain(chain, "link_eef", "arm_link")
-        self.chain.print_tree()
-
-        # Now we'll publish a test pose
-        self.send_test_pose()
-
-    def target_pose_callback(self, msg):
-        self.get_logger().info(f"Received target pose: {msg.position}")
-        # Check if we have the necessary data
-        if self.current_joint_state is None:
-            self.get_logger().error("No joint state received yet")
-            return
-
-        if self.robot_model is None:
-            self.get_logger().error("No robot description received yet")
-            return
-
-        # Plan and execute trajectory
-        self.plan_and_execute_trajectory(msg)
-
-    def parse_robot_description(self):
-        if self.robot_description is None:
-            return
-
-        try:
-            root = ET.fromstring(self.robot_description)
-
-            # Extract joint limits
-            self.joint_limits = {}
-
-            for joint in root.findall(".//joint"):
-                joint_name = joint.get("name")
-                joint_type = joint.get("type")
-
-                if joint_type in ["revolute", "prismatic"]:
-                    limit = joint.find("limit")
-                    if limit is not None:
-                        lower = float(limit.get("lower", -np.pi))
-                        upper = float(limit.get("upper", np.pi))
-                        self.joint_limits[joint_name] = (lower, upper)
-
-                        # Set hard-coded velocity and acceleration limits for each joint
-                        self.joint_velocity_limits[joint_name] = 1.0  # rad/s
-                        self.joint_acceleration_limits[joint_name] = 2.0  # rad/s^2
-
-            # Simplified robot model for collision checking
-            self.robot_model = {"joints": list(self.joint_limits.keys()), "links": []}
-
-            for link in root.findall(".//link"):
-                link_name = link.get("name")
-                collision = link.find("collision")
-                if collision is not None:
-                    geometry = collision.find("geometry")
-                    if geometry is not None:
-                        # Use a bounding box for each link
-                        link_bbox = self.extract_bounding_box(geometry)
-                        self.robot_model["links"].append(
-                            {"name": link_name, "bbox": link_bbox}
-                        )
-
-            self.get_logger().info(
-                f'Parsed {len(self.joint_limits)} joints and {len(self.robot_model["links"])} links'
-            )
-
-        except Exception as e:
-            self.get_logger().error(f"Error parsing robot description: {str(e)}")
-
-    def extract_bounding_box(self, geometry):
-        # Extract bounding box from geometry element
-        box = geometry.find("box")
-        if box is not None:
-            size = box.get("size", "0.1 0.1 0.1").split()
-            return [
-                -float(size[0]) / 2,
-                -float(size[1]) / 2,
-                -float(size[2]) / 2,
-                float(size[0]) / 2,
-                float(size[1]) / 2,
-                float(size[2]) / 2,
-            ]
-
-        cylinder = geometry.find("cylinder")
-        if cylinder is not None:
-            radius = float(cylinder.get("radius", "0.1"))
-            length = float(cylinder.get("length", "0.1"))
-            return [-radius, -radius, -length / 2, radius, radius, length / 2]
-
-        sphere = geometry.find("sphere")
-        if sphere is not None:
-            radius = float(sphere.get("radius", "0.1"))
-            return [-radius, -radius, -radius, radius, radius, radius]
-
-        # Default small box if no geometry is specified
-        return [-0.05, -0.05, -0.05, 0.05, 0.05, 0.05]
-
-    def extract_joint_positions(self, msg: JointState):
-        """
-        Extract joint positions from a JointState message
-
-        Only consider joints with "joint" in their name, e.g. "joint1", "joint2"
-        """
-        joint_positions = [0.0] * self.num_joints
-        for i, name in enumerate(msg.name):
-            if name[:5] == "joint":
-                joint_number = int(name.replace("joint", ""))
-                joint_positions[joint_number - 1] = msg.position[i]
-        return joint_positions
-
-    def plan_and_execute_trajectory(self, target_pose):
-        self.get_logger().info("Planning trajectory...")
-
-        # Get current joint state
-        with self.joint_state_lock:
-            if self.current_joint_state is None:
-                self.get_logger().error("No joint state available")
-                return
-
-            start_state = self.extract_joint_positions(self.current_joint_state)
-            print(f"Start state: {start_state}")
-            # start_state = list(self.current_joint_state.position)
-
-        # Convert target pose to joint space (inverse kinematics)
-        self.get_logger().info(
-            f"Calculating IK for target pose: {target_pose.position}"
+        self.clicked_point_sub = self.create_subscription(
+            Point, "/ecosim/clicked_point", self.clicked_point_cb, 10
         )
-        goal_state = self.inverse_kinematics(target_pose)
-        self.get_logger().info(f"Goal state is {goal_state}")
-        self.get_logger().info(f"Start state is {start_state}")
 
-        if goal_state is None:
-            self.get_logger().error("Failed to compute inverse kinematics")
-            return
-
-        # Plan trajectory using RRT*
-
-        trajectory = self.plan_rrt_star(start_state, goal_state)
-
-        if trajectory is None or len(trajectory) == 0:
-            self.get_logger().error("Failed to plan trajectory")
-            return
-
-        # Apply velocity and acceleration limits
-        smooth_trajectory = self.apply_limits(trajectory)
-
-        # Execute trajectory
-        self.execute_trajectory(smooth_trajectory)
-
-    def inverse_kinematics(self, pose: Pose, max_iters: int = 300) -> list[float]:
-        """
-        Calculate the inverse kinematics for a given pose using Jacobian pseudoinverse
-
-        Args:
-            pose: Target pose in link_base (robot base) coordinates
-            initial_guess: Initial guess for the joint configuration
-
-        Returns:
-            List of joint angles that achieve the target pose
-        """
-
-        if self.chain is None:
-            self.get_logger().error("No chain available for inverse kinematics")
-            return None
-
-        # Extract position and orientation from the pose
-        x = pose.position.x
-        y = pose.position.y
-        z = pose.position.z
-
-        quaternion = [
-            pose.orientation.x,
-            pose.orientation.y,
-            pose.orientation.z,
-            pose.orientation.w,
+        self.target_position = [
+            -0.07324862480163574,
+            0.32391729950904846,
+            0.3905857503414154,
         ]
 
-        # from_quat is scalar-last by default
-        roll, pitch, yaw = (
-            R.from_quat(quaternion).as_euler("xyz", degrees=False).tolist()
-        )
+        self.plan_sent = False
+        self.plan = None
+        self.create_timer(1.0, self.try_plan)
+        self.create_timer(0.1, self.execute_plan)
 
-        lim = torch.tensor(self.chain.get_limits())
+        # This stores the current joint angles
+        # (including for inactive joints like link_base and the gripper link)
+        # Only joints 1-6 are active (zero-indexed)
+        self.current_joint_angles = [0.0] * 10
 
-        ik = pk.PseudoInverseIK(
-            self.chain,
-            max_iterations=max_iters,
-            num_retries=10,
-            joint_limits=lim.T,
-            early_stopping_any_converged=True,
-            early_stopping_no_improvement="all",
-            debug=False,
-            lr=0.2,
-        )
+    def execute_plan(self):
+        if self.plan is None or len(self.plan) == 0:
+            return
 
-        goal_in_arm_link_frame = pk.Transform3d(pos=[x, y, z], rot=[roll, pitch, yaw])
+        msg = JointState()
+        msg.name = self.names
+        msg.position = self.plan[0]
+        self.plan = self.plan[1:]
+        self.joint_command_pub.publish(msg)
+        print(f"Executing plan:  {msg.position}")
 
-        sol = ik.solve(goal_in_arm_link_frame)
-
-        print(sol.solutions)
-        # num goals x num retries can check for the convergence of each run
-        print(sol.converged)
-        # num goals x num retries can look at errors directly
-        print(sol.err_pos)
-        print(sol.err_rot)
-
-    def plan_rrt_star(
-        self,
-        start_state,
-        goal_state,
-        max_iterations=1000,
-        step_size=0.1,
-        goal_sample_rate=0.1,
-        search_radius=0.5,
-    ):
-        """
-        RRT* algorithm for path planning
-
-        Args:
-            start_state: Starting joint configuration
-            goal_state: Goal joint configuration
-            max_iterations: Maximum iterations to run
-            step_size: Distance to extend tree
-            goal_sample_rate: Probability of sampling the goal
-            search_radius: Radius to search for neighbors for rewiring
-
-        Returns:
-            List of joint configurations forming a path from start to goal
-        """
-        # Tree structure: {node_id: {'state': joint_state, 'parent': parent_id, 'cost': cost}}
-        tree = {0: {"state": start_state, "parent": None, "cost": 0.0}}
-
-        # Track nodes close to the goal
-        goal_candidates = []
-
-        for i in range(max_iterations):
-            # Sample a random state
-            if random.random() < goal_sample_rate:
-                random_state = goal_state
-            else:
-                random_state = self.sample_random_state()
-
-            # Find nearest node in the tree
-            nearest_node_id = self.find_nearest(tree, random_state)
-
-            # Extend towards the random state
-            new_state = self.extend(
-                tree[nearest_node_id]["state"], random_state, step_size
+    def try_plan(self):
+        if self.plan_sent == True:
+            return
+        self.clicked_point_cb(
+            Point(
+                x=self.target_position[0],
+                y=self.target_position[1],
+                z=self.target_position[2],
             )
+        )
+        self.plan_sent = True
 
-            # Check if the new state is valid
-            if not self.is_state_valid(new_state) or not self.is_motion_valid(
-                tree[nearest_node_id]["state"], new_state
-            ):
+    def clicked_point_cb(self, msg: Point):
+        if not hasattr(self, "chain"):
+            self.get_logger().warn(
+                "Chain not initialized. Waiting for robot_description."
+            )
+            return
+
+        print(f"Clicked point: {msg.x}, {msg.y}, {msg.z}")
+
+        links: list[URDFLink] = self.chain.links
+
+        q = [0.0] * len(links)
+        names = []
+        limits = []
+        for i, link in enumerate(links):
+            if not isinstance(link, URDFLink) or link.joint_type == "fixed":
                 continue
 
-            # Add the new node to the tree
-            new_node_id = len(tree)
-            cost = tree[nearest_node_id]["cost"] + self.distance(
-                tree[nearest_node_id]["state"], new_state
-            )
-            tree[new_node_id] = {
-                "state": new_state,
-                "parent": nearest_node_id,
-                "cost": cost,
-            }
+            limits.append(link.bounds)
+            q[i] = random.uniform(link.bounds[0], link.bounds[1])
+            names.append(link.name)
 
-            # Find neighbors within search radius
-            neighbors = self.find_neighbors(tree, new_state, search_radius)
+        target_pos = [msg.x, msg.y, msg.z]
+        target_rot = [1.0, 0.0, 0.0]
 
-            # Connect to the best parent
-            self.connect_to_best_parent(tree, new_node_id, neighbors)
+        ik = self.chain.inverse_kinematics(target_pos, target_rot, orientation_mode="X")
 
-            # Rewire the tree
-            self.rewire_tree(tree, new_node_id, neighbors)
+        target_positions = [float(x) for x in ik[1:7]]
+        print(target_positions)
+        print(names)
+        self.names = names
 
-            # Check if we can connect to the goal
-            if self.distance(
-                new_state, goal_state
-            ) < step_size and self.is_motion_valid(new_state, goal_state):
-                goal_node_id = len(tree)
-                goal_cost = tree[new_node_id]["cost"] + self.distance(
-                    new_state, goal_state
-                )
-                tree[goal_node_id] = {
-                    "state": goal_state,
-                    "parent": new_node_id,
-                    "cost": goal_cost,
-                }
-                goal_candidates.append((goal_node_id, goal_cost))
+        print(f"Planning path from {self.current_joint_angles} to {target_positions}")
+        planner = RRTStarPlanner(
+            start=self.current_joint_angles,
+            goal=target_positions,
+            obstacle_list=[],
+            bounds=limits,
+        )
+        plan = planner.plan()
+        if plan is None:
+            self.get_logger().warn("No path found")
+            return
 
-        # Return the best path to the goal if found
-        if goal_candidates:
-            best_goal_id = min(goal_candidates, key=lambda x: x[1])[0]
-            return self.extract_path(tree, best_goal_id)
+        self.plan = plan
+        print(f"Plan: {plan}")
 
-        # If no path to the goal is found, return the path to the node closest to the goal
-        closest_node_id = self.find_nearest(tree, goal_state)
-        return self.extract_path(tree, closest_node_id)
+    def robot_description_cb(self, msg: String):
+        with open("/tmp/johnny.urdf", "w") as f:
+            f.write(msg.data)
 
-    def sample_random_state(self):
-        """Sample a random joint configuration within joint limits"""
-        random_state = []
-        for joint_name in self.joint_limits:
-            lower, upper = self.joint_limits[joint_name]
-            random_state.append(lower + (upper - lower) * random.random())
-        return random_state
-
-    def find_nearest(self, tree, state):
-        """Find the nearest node in the tree to the given state"""
-        return min(
-            tree.keys(),
-            key=lambda node_id: self.distance(tree[node_id]["state"], state),
+        self.chain = Chain.from_urdf_file(
+            "/tmp/johnny.urdf",
+            base_elements=["link_base"],
+            active_links_mask=[
+                False,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                False,
+                False,
+                False,
+            ],
         )
 
-    def distance(self, state1, state2):
-        """Compute the Euclidean distance between two states"""
-        return np.linalg.norm(np.array(state1) - np.array(state2))
+    def send_random_joint_angle(self):
+        if not hasattr(self, "chain"):
+            self.get_logger().warn(
+                "Chain not initialized. Waiting for robot_description."
+            )
+            return
 
-    def extend(self, from_state, to_state, step_size):
-        """Extend from one state towards another by a limited step size"""
-        direction = np.array(to_state) - np.array(from_state)
-        norm = np.linalg.norm(direction)
-        if norm < step_size:
-            return to_state
+        links: list[URDFLink] = self.chain.links
+
+        q = [0.0] * len(links)
+        names = []
+        for i, link in enumerate(links):
+            if not isinstance(link, URDFLink) or link.joint_type == "fixed":
+                continue
+
+            q[i] = random.uniform(link.bounds[0], link.bounds[1])
+            names.append(link.name)
+
+        T = self.chain.forward_kinematics(q)
+
+        target_pos = T[:3, 3]
+        target_rot = T[:3, :3]
+        ik = self.chain.inverse_kinematics(
+            target_pos, target_rot, orientation_mode="all"
+        )
+
+        print(T)
+
+        positions = [float(x) for x in ik[1:7]]
+        print(positions)
+        print(names)
+
+        msg = JointState()
+        msg.name = names
+        msg.position = positions
+
+        self.joint_command_pub.publish(msg)
+
+    def draw_spiral(self, radius=0.5, num_points=100):
+        if not hasattr(self, "chain"):
+            self.get_logger().warn(
+                "Chain not initialized. Waiting for robot_description."
+            )
+            return
+
+        links: list[URDFLink] = self.chain.links
+
+        q = [0.0] * len(links)
+        names = []
+        limits = []
+        for i, link in enumerate(links):
+            if not isinstance(link, URDFLink) or link.joint_type == "fixed":
+                continue
+
+            limits.append(link.bounds)
+            q[i] = random.uniform(link.bounds[0], link.bounds[1])
+            names.append(link.name)
+
+        T = self.chain.forward_kinematics(q)
+
+        if not hasattr(self, "dtheta"):
+            self.dtheta = 2 * math.pi / num_points
+            self.theta = 0.0
+
+            self.dz = 0.01
+            self.target_z = 0.2
+
+        x = radius * math.cos(self.theta)
+        y = radius * math.sin(self.theta)
+
+        target_pos = [x, y, self.target_z]
+
+        target_rot = R.from_euler(
+            "xyz", [-np.pi / 2, -np.pi / 2, self.theta - np.pi / 2], degrees=False
+        ).as_matrix()
+
+        T = np.eye(4)
+        T[:3, :3] = target_rot
+        T[:3, 3] = target_pos
+
+        # IK can break if the robot is at its limits
+        if self.at_limits(self.current_joint_angles[1:7], limits):
+            print("At limits, setting initial_ik to zero")
+            ik = self.chain.inverse_kinematics_frame(
+                T,
+                initial_position=[0.0] * 10,
+                orientation_mode="all",
+            )
+
         else:
-            return list(np.array(from_state) + step_size * direction / norm)
-
-    def find_neighbors(self, tree, state, radius):
-        """Find all nodes in the tree within a certain radius of the state"""
-        return [
-            node_id
-            for node_id, node in tree.items()
-            if self.distance(node["state"], state) < radius
-        ]
-
-    def connect_to_best_parent(self, tree, node_id, neighbors):
-        """Connect the node to the best parent in its neighborhood"""
-        if not neighbors:
-            return
-
-        current_state = tree[node_id]["state"]
-        current_parent = tree[node_id]["parent"]
-        current_cost = tree[node_id]["cost"]
-
-        for neighbor_id in neighbors:
-            if neighbor_id == current_parent or neighbor_id == node_id:
-                continue
-
-            neighbor_state = tree[neighbor_id]["state"]
-            potential_cost = tree[neighbor_id]["cost"] + self.distance(
-                neighbor_state, current_state
+            ik = self.chain.inverse_kinematics_frame(
+                T,
+                initial_position=self.current_joint_angles,
+                orientation_mode="all",
             )
 
-            if potential_cost < current_cost and self.is_motion_valid(
-                neighbor_state, current_state
-            ):
-                tree[node_id]["parent"] = neighbor_id
-                tree[node_id]["cost"] = potential_cost
+        self.current_joint_angles = ik
 
-    def rewire_tree(self, tree, node_id, neighbors):
-        """Rewire the tree by potentially changing the parents of neighboring nodes"""
-        if not neighbors:
-            return
+        print(T)
 
-        current_state = tree[node_id]["state"]
-        current_cost = tree[node_id]["cost"]
+        positions = [float(x) for x in ik[1:7]]
+        print(positions)
+        print(limits)
 
-        for neighbor_id in neighbors:
-            if neighbor_id == tree[node_id]["parent"] or neighbor_id == node_id:
-                continue
+        msg = JointState()
+        msg.name = names
+        msg.position = positions
 
-            neighbor_state = tree[neighbor_id]["state"]
-            potential_cost = current_cost + self.distance(current_state, neighbor_state)
+        self.joint_command_pub.publish(msg)
 
-            if potential_cost < tree[neighbor_id]["cost"] and self.is_motion_valid(
-                current_state, neighbor_state
-            ):
-                tree[neighbor_id]["parent"] = node_id
-                tree[neighbor_id]["cost"] = potential_cost
+        self.theta += self.dtheta
+        if self.theta >= 2 * math.pi:
+            self.theta = 0.0
 
-    def extract_path(self, tree, node_id):
-        """Extract the path from the start node to the given node"""
-        path = []
-        current_id = node_id
+        self.target_z += self.dz
+        if self.target_z >= 0.8:
+            self.dz = -self.dz
 
-        while current_id is not None:
-            path.append(tree[current_id]["state"])
-            current_id = tree[current_id]["parent"]
+        elif self.target_z <= 0.2:
+            self.dz = -self.dz
 
-        return list(reversed(path))
+        print(self.theta)
 
-    def is_state_valid(self, state):
-        """Check if a state is valid (within joint limits and no collisions)"""
-        # Check joint limits
-        for i, joint_name in enumerate(self.joint_limits):
-            lower, upper = self.joint_limits[joint_name]
-            if state[i] < lower or state[i] > upper:
-                return False
-
-        # Check self-collisions and collisions with obstacles
-        if self.check_collisions(state):
-            return False
-
-        return True
-
-    def is_motion_valid(self, from_state, to_state, checks=10):
-        """Check if the motion between two states is valid"""
-        # Interpolate between states and check each interpolated state
-        for i in range(checks + 1):
-            t = i / checks
-            interpolated_state = [
-                from_state[j] * (1 - t) + to_state[j] * t
-                for j in range(len(from_state))
-            ]
-
-            if not self.is_state_valid(interpolated_state):
-                return False
-
-        return True
-
-    def check_collisions(self, joint_state):
-        """
-        Check for collisions with the given joint state
-
-        Returns True if collision detected, False otherwise
-        """
-        # Forward kinematics to get the positions of all links
-        link_positions = self.forward_kinematics(joint_state)
-
-        # Check self-collisions
-        for i in range(len(link_positions)):
-            for j in range(i + 1, len(link_positions)):
-                if self.check_bbox_collision(link_positions[i], link_positions[j]):
-                    return True
-
-        # Check collisions with obstacles
-        for link_pos in link_positions:
-            for obstacle in self.obstacles:
-                if self.check_bbox_collision(link_pos, obstacle):
-                    return True
-
+    def at_limits(self, q, limits, tolerance=0.1):
+        for i in range(len(q)):
+            if q[i] < limits[i][0] + tolerance or q[i] > limits[i][1] - tolerance:
+                return True
         return False
-
-    def forward_kinematics(self, joints: np.ndarray) -> np.ndarray:
-        """
-        Computes the forward kinematics for the given joint angles
-
-        Args:
-            joints: Joint angles of length num_joints
-        Returns:
-            A homogenous transformation matrix representing the end-effector pose
-        """
-
-        if self.chain is None:
-            self.get_logger().error("No chain available for forward kinematics")
-            return None
-
-        m = self.chain.forward_kinematics(joints).get_matrix()
-
-        return m
-
-    def check_bbox_collision(self, bbox1, bbox2):
-        """Check if two bounding boxes collide"""
-        return (
-            bbox1[0] <= bbox2[3]
-            and bbox1[3] >= bbox2[0]
-            and bbox1[1] <= bbox2[4]
-            and bbox1[4] >= bbox2[1]
-            and bbox1[2] <= bbox2[5]
-            and bbox1[5] >= bbox2[2]
-        )
-
-    def apply_limits(self, trajectory, dt=0.1):
-        """
-        Apply velocity and acceleration limits to a trajectory
-
-        Args:
-            trajectory: List of joint states
-            dt: Time step between states
-
-        Returns:
-            Smooth trajectory that respects velocity and acceleration limits
-        """
-        if len(trajectory) <= 2:
-            return trajectory
-
-        # Extract joint names
-        joint_names = list(self.joint_limits.keys())
-
-        # Initialize smooth trajectory with the first point
-        smooth_trajectory = [trajectory[0]]
-
-        # Current velocities for each joint
-        current_velocities = [0.0] * len(joint_names)
-
-        for i in range(1, len(trajectory)):
-            current_state = smooth_trajectory[-1]
-            target_state = trajectory[i]
-
-            # Calculate desired joint velocities
-            desired_velocities = [
-                (target_state[j] - current_state[j]) / dt
-                for j in range(len(joint_names))
-            ]
-
-            # Apply velocity limits
-            limited_velocities = []
-            for j, joint_name in enumerate(joint_names):
-                vel_limit = self.joint_velocity_limits[joint_name]
-                if abs(desired_velocities[j]) > vel_limit:
-                    limited_velocities.append(
-                        vel_limit * np.sign(desired_velocities[j])
-                    )
-                else:
-                    limited_velocities.append(desired_velocities[j])
-
-            # Apply acceleration limits
-            for j, joint_name in enumerate(joint_names):
-                acc_limit = self.joint_acceleration_limits[joint_name]
-                max_vel_change = acc_limit * dt
-                vel_change = limited_velocities[j] - current_velocities[j]
-
-                if abs(vel_change) > max_vel_change:
-                    limited_velocities[j] = current_velocities[
-                        j
-                    ] + max_vel_change * np.sign(vel_change)
-
-            # Update current velocities
-            current_velocities = limited_velocities
-
-            # Calculate new state
-            new_state = [
-                current_state[j] + current_velocities[j] * dt
-                for j in range(len(joint_names))
-            ]
-
-            smooth_trajectory.append(new_state)
-
-            # Check if we're close enough to the target
-            if self.distance(new_state, target_state) < 0.01:
-                # Skip to the next target point
-                continue
-
-        # Ensure the final point is exactly the goal state
-        smooth_trajectory[-1] = trajectory[-1]
-
-        return smooth_trajectory
-
-    def execute_trajectory(self, trajectory, dt=0.1):
-        """
-        Execute a trajectory by publishing joint commands
-
-        Args:
-            trajectory: List of joint states
-            dt: Time step between states
-        """
-        self.get_logger().info(f"Executing trajectory with {len(trajectory)} points")
-
-        joint_names = list(self.joint_limits.keys())
-
-        for i, state in enumerate(trajectory):
-            # Create joint state message
-            msg = JointState()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.name = joint_names
-            msg.position = state
-
-            # Calculate velocities for all but the first and last point
-            if i > 0 and i < len(trajectory) - 1:
-                prev_state = trajectory[i - 1]
-                velocities = [
-                    (state[j] - prev_state[j]) / dt for j in range(len(joint_names))
-                ]
-                msg.velocity = velocities
-            else:
-                msg.velocity = [0.0] * len(joint_names)
-
-            # Publish joint command
-            self.joint_command_pub.publish(msg)
-
-            # Sleep to maintain the specified rate
-            time.sleep(dt)
-
-        self.get_logger().info("Trajectory execution completed")
 
 
 def main(args=None):

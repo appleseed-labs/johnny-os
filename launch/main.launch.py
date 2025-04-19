@@ -98,7 +98,7 @@ def generate_launch_description():
             # INTERFACES
             # rosbridge_server,
             unity_endpoint,
-            swiftnav_interface,
+            # swiftnav_interface,
             # PERCEPTION
             # PLANNING
             fix_to_transform_node,

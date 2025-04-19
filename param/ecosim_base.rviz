@@ -11,6 +11,7 @@ Panels:
         - /TF1
         - /TF1/Frames1
         - /PointCloud22
+        - /MarkerArray1
       Splitter Ratio: 0.5
     Tree Height: 532
   - Class: rviz_common/Selection
@@ -368,6 +369,18 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: MarkerArray
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /obstacle_visualization
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -421,18 +434,18 @@ Visualization Manager:
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0.10494830459356308
-        Y: 0.27279335260391235
-        Z: 0.2302960753440857
+        X: -0.05795855075120926
+        Y: 0.22391988337039948
+        Z: 0.70941162109375
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.22979527711868286
+      Pitch: -0.1102050319314003
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 6.193624973297119
+      Yaw: 0.2804379165172577
     Saved: ~
 Window Geometry:
   Displays:
@@ -450,5 +463,5 @@ Window Geometry:
   Views:
     collapsed: true
   Width: 1672
-  X: 21
-  Y: 48
+  X: 197
+  Y: 243

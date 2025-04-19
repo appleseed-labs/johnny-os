@@ -17,9 +17,12 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from scipy.spatial.transform import Rotation as R
 from ikpy.chain import Chain
 from ikpy.link import URDFLink
+import tf2_ros
 
 # ROS messages
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PointStamped
+from visualization_msgs.msg import MarkerArray, Marker
+import tf2_geometry_msgs
 
 
 class RRTStarPlanner:
@@ -28,6 +31,7 @@ class RRTStarPlanner:
         start,
         goal,
         obstacle_list,
+        chain: Chain,
         bounds: list[tuple],
         step_size=0.1,
         neighbor_radius=0.5,
@@ -43,6 +47,7 @@ class RRTStarPlanner:
         self.max_iters = max_iters
         self.goal_bias = goal_bias
         self.node_list = [self.start]
+        self.chain = chain
 
     class Node:
         def __init__(self, config):
@@ -137,16 +142,85 @@ class RRTStarPlanner:
             return new_config
 
     def _in_collision(self, config1, config2):
+        # Discretize the path between config1 and config2
+        num_steps = 10  # Number of steps to check along the path
+        for i in range(num_steps + 1):
+            # Linearly interpolate between config1 and config2
+            alpha = i / num_steps
+            config = tuple(
+                c1 * (1 - alpha) + c2 * alpha for c1, c2 in zip(config1, config2)
+            )
 
-        # 1. Perform FK to get geometry at config1 & config2
+            # Convert joint angles to end-effector and link positions using forward kinematics
+            # This would typically be done using the robot's forward kinematics model
+            # For now, we'll assume a function robot_fk(config) that returns link positions
 
-        # 2. Check for collisions between the robot's links
-        # (and ideally the swept volume between config1 and config2)
-        # and the obstacles in self.obstacle_list
+            # Use forward kinematics to get robot geometry
+            robot_geometry = self._get_robot_geometry(config)
 
-        return False  # TODO IMPLEMENT
+            # Check for collisions with obstacles
+            for obstacle in self.obstacle_list:
+                if self._check_robot_obstacle_collision(robot_geometry, obstacle):
+                    print("Collision detected!")
+                    return True  # Collision detected
 
-        raise NotImplementedError("Collision checking not implemented")
+        # No collision detected
+        return False
+
+    def _get_robot_geometry(self, config):
+        """
+        Calculate the position and geometry of each robot link using forward kinematics.
+        Returns a list of geometries representing the robot's links.
+        """
+        full_config = [0.0] * 10
+        full_config[1:7] = config
+        T = self.chain.forward_kinematics(full_config, full_kinematics=True)
+
+        # For now, treat the joints as spheres
+
+        geom = []
+        for i, link in enumerate(self.chain.links):
+
+            pos = T[i][:3, 3]
+            rot = T[i][:3, :3]
+            # Create a geometry representation of the link
+            # For now, we'll just use the position and rotation
+            geom.append(
+                {
+                    "position": pos,
+                    "rotation": rot,
+                    "name": link.name,
+                    "radius": 0.05,  # Placeholder for link radius
+                }
+            )
+
+        return geom
+
+    def _check_robot_obstacle_collision(self, robot_geometry, obstacle):
+        """
+        Check for collision between the robot geometry and an obstacle.
+        Returns True if there is a collision, False otherwise.
+        """
+        # For simplicity, assume obstacles are spheres with a position and radius
+
+        obstacle_position = obstacle["position"]
+        obstacle_radius = obstacle["radius"]
+
+        # Check collision between each robot link and the obstacle
+        for link in robot_geometry:
+            link_position = link["position"]
+            link_radius = link["radius"]
+
+            # Calculate distance between link and obstacle centers
+            distance = math.sqrt(
+                sum((l - o) ** 2 for l, o in zip(link_position, obstacle_position))
+            )
+
+            # Collision if the distance is less than the sum of radii
+            if distance < (link_radius + obstacle_radius):
+                return True
+
+        return False
 
     def _distance(self, config1, config2):
         return math.sqrt(sum((c1 - c2) ** 2 for c1, c2 in zip(config1, config2)))
@@ -210,7 +284,13 @@ class ArmTrajectoryPlanner(Node):
         )
 
         self.clicked_point_sub = self.create_subscription(
-            Point, "/ecosim/clicked_point", self.clicked_point_cb, 10
+            Point, "/ecosim/clicked_point", self.clicked_point_cb, 1
+        )
+
+        self.obstacle_vis_pub = self.create_publisher(
+            MarkerArray,
+            "/obstacle_visualization",
+            10,
         )
 
         self.target_position = [
@@ -219,9 +299,12 @@ class ArmTrajectoryPlanner(Node):
             0.3905857503414154,
         ]
 
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
         self.plan_sent = False
         self.plan = None
-        self.create_timer(1.0, self.try_plan)
+        # self.create_timer(1.0, self.try_plan)
         self.create_timer(0.1, self.execute_plan)
 
         # This stores the current joint angles
@@ -238,6 +321,7 @@ class ArmTrajectoryPlanner(Node):
         msg.position = self.plan[0]
         self.plan = self.plan[1:]
         self.joint_command_pub.publish(msg)
+        self.current_joint_angles = msg.position
         print(f"Executing plan:  {msg.position}")
 
     def try_plan(self):
@@ -251,6 +335,62 @@ class ArmTrajectoryPlanner(Node):
             )
         )
         self.plan_sent = True
+
+    def visualize_obstacles(self, obstacles: list[dict]):
+        """
+        Visualize each obstacle as a sphere in RViz
+        """
+        msg = MarkerArray()
+        for i, obstacle in enumerate(obstacles):
+            marker = Marker()
+            marker.header.frame_id = obstacle["frame_id"]
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns = "obstacle"
+            marker.id = i
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            marker.pose.position.x = obstacle["position"][0]
+            marker.pose.position.y = obstacle["position"][1]
+            marker.pose.position.z = obstacle["position"][2]
+            marker.scale.x = obstacle["radius"] * 2
+            marker.scale.y = obstacle["radius"] * 2
+            marker.scale.z = obstacle["radius"] * 2
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+            marker.color.a = 0.5
+
+            msg.markers.append(marker)
+
+        self.obstacle_vis_pub.publish(msg)
+
+    def transform_obstacle(self, obstacle: dict):
+        """
+        Transform the obstacle to the arm's frame
+        """
+
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                "link_base", obstacle["frame_id"], rclpy.time.Time()
+            )
+        except tf2_ros.LookupException as e:
+            self.get_logger().error(f"Transform not found: {e}")
+            return obstacle
+
+        obstacle_point = Point()
+        obstacle_point.x = obstacle["position"][0]
+        obstacle_point.y = obstacle["position"][1]
+        obstacle_point.z = obstacle["position"][2]
+        obstacle_point_transformed = tf2_geometry_msgs.do_transform_point(
+            PointStamped(point=obstacle_point), transform
+        )
+        obstacle["position"] = [
+            obstacle_point_transformed.point.x,
+            obstacle_point_transformed.point.y,
+            obstacle_point_transformed.point.z,
+        ]
+        obstacle["frame_id"] = "link_base"
+        return obstacle
 
     def clicked_point_cb(self, msg: Point):
         if not hasattr(self, "chain"):
@@ -285,11 +425,37 @@ class ArmTrajectoryPlanner(Node):
         self.names = names
 
         print(f"Planning path from {self.current_joint_angles} to {target_positions}")
+
+        obstacle_list = []
+
+        center = [
+            0.7930782,
+            0.4170361,
+            0.5,
+        ]
+        for x in np.linspace(-0.25, 0.25, 5):
+            for y in np.linspace(-0.15, 0.15, 5):
+                obstacle_list.append(
+                    {
+                        "position": [x + center[0], y + center[1], center[2]],
+                        "radius": 0.05,
+                        "frame_id": "base_link",
+                    }
+                )
+
+        # Transform obstacles to the arm's frame
+        for obstacle in obstacle_list:
+            obstacle = self.transform_obstacle(obstacle)
+
+        self.visualize_obstacles(obstacle_list)
+
         planner = RRTStarPlanner(
             start=self.current_joint_angles,
             goal=target_positions,
-            obstacle_list=[],
+            obstacle_list=obstacle_list,
+            chain=self.chain,
             bounds=limits,
+            max_iters=1000,
         )
         plan = planner.plan()
         if plan is None:
@@ -346,11 +512,7 @@ class ArmTrajectoryPlanner(Node):
             target_pos, target_rot, orientation_mode="all"
         )
 
-        print(T)
-
         positions = [float(x) for x in ik[1:7]]
-        print(positions)
-        print(names)
 
         msg = JointState()
         msg.name = names
@@ -418,11 +580,7 @@ class ArmTrajectoryPlanner(Node):
 
         self.current_joint_angles = ik
 
-        print(T)
-
         positions = [float(x) for x in ik[1:7]]
-        print(positions)
-        print(limits)
 
         msg = JointState()
         msg.name = names

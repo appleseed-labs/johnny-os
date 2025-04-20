@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from ament_index_python import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -18,6 +19,8 @@ from scipy.spatial.transform import Rotation as R
 from ikpy.chain import Chain
 from ikpy.link import URDFLink
 import tf2_ros
+import trimesh
+import pyglet
 
 # ROS messages
 from geometry_msgs.msg import Point, PointStamped
@@ -25,238 +28,25 @@ from visualization_msgs.msg import MarkerArray, Marker
 import tf2_geometry_msgs
 
 
-class RRTStarPlanner:
-    def __init__(
-        self,
-        start,
-        goal,
-        obstacle_list,
-        chain: Chain,
-        bounds: list[tuple],
-        step_size=0.1,
-        neighbor_radius=0.5,
-        max_iters=5000,
-        goal_bias=0.05,
-    ):
-        self.start = self.Node(start)
-        self.goal = self.Node(goal)
-        self.obstacle_list = obstacle_list
-        self.bounds = bounds  # list of bounds [(min_x, max_y)...] for each joint
-        self.step_size = step_size
-        self.neighbor_radius = neighbor_radius
-        self.max_iters = max_iters
-        self.goal_bias = goal_bias
-        self.node_list = [self.start]
-        self.chain = chain
+class BoxObstacle:
+    def __init__(self, box_min, box_max, frame_id):
+        assert len(box_min) == 3
+        assert len(box_max) == 3
+        assert all(
+            box_min[i] <= box_max[i] for i in range(3)
+        ), "Box min must be less than or equal to box max"
+        self.box_min = box_min
+        self.box_max = box_max
+        self.frame_id = frame_id
 
-    class Node:
-        def __init__(self, config):
-            self.config = config
-            self.parent = None
-            self.cost = 0.0
 
-    def plan(self):
-        for i in range(self.max_iters):
-
-            # 1. Sample a random joint configuration
-            if random.random() < self.goal_bias:
-                random_config = self.goal.config
-            else:
-                random_config = self._get_random_config()
-
-            # 2. Find the nearest neighbor in the tree
-            nearest_node = self._find_nearest_neighbor(self.node_list, random_config)
-
-            # 3. Steer towards the random configuration
-            new_config = self._steer(nearest_node.config, random_config, self.step_size)
-            new_node = self.Node(new_config)
-
-            # 4. Check for collisions
-            if not self._in_collision(nearest_node.config, new_config):
-                # 5. Add the new node to the tree
-                new_node.parent = nearest_node
-                new_node.cost = nearest_node.cost + self._distance(
-                    nearest_node.config, new_config
-                )
-
-                # 6. Rewire the tree
-                near_nodes = self._find_near_nodes(new_node)
-                for near_node in near_nodes:
-                    if (
-                        new_node.cost
-                        + self._distance(new_node.config, near_node.config)
-                        < near_node.cost
-                    ):
-                        if not self._in_collision(new_node.config, near_node.config):
-                            near_node.parent = new_node
-                            near_node.cost = new_node.cost + self._distance(
-                                new_node.config, near_node.config
-                            )
-
-                self.node_list.append(new_node)
-
-                # 7. Check if the new node is close to the goal
-                if self._distance(new_node.config, self.goal.config) < self.step_size:
-                    if not self._in_collision(new_node.config, self.goal.config):
-                        self.goal.parent = new_node
-                        self.goal.cost = new_node.cost + self._distance(
-                            new_node.config, self.goal.config
-                        )
-                        return self._reconstruct_path()
-
-        return None  # No path found
-
-    def _get_random_config(self):
-        config = []
-
-        for lower, upper in self.bounds:
-            config.append(random.uniform(lower, upper))
-
-        return tuple(config)
-
-    def _find_nearest_neighbor(self, node_list, config):
-        min_dist = float("inf")
-        nearest_node = None
-
-        for node in node_list:
-            dist = self._distance(node.config, config)
-            if dist < min_dist:
-                min_dist = dist
-                nearest_node = node
-        return nearest_node
-
-    def _steer(self, from_config, to_config, step_size):
-        direction = tuple(t - f for f, t in zip(from_config, to_config))
-
-        # Euclidean distance
-        norm = math.sqrt(sum(d**2 for d in direction))
-
-        if norm < step_size:
-            return to_config
-        else:
-            # Scale the direction vector to the step size.
-            # Add the direction vector to the from_config
-            # to get the new configuration.
-            scale = step_size / norm
-            new_config = tuple(f + d * scale for f, d in zip(from_config, direction))
-            return new_config
-
-    def _in_collision(self, config1, config2):
-        # Discretize the path between config1 and config2
-        num_steps = 10  # Number of steps to check along the path
-        for i in range(num_steps + 1):
-            # Linearly interpolate between config1 and config2
-            alpha = i / num_steps
-            config = tuple(
-                c1 * (1 - alpha) + c2 * alpha for c1, c2 in zip(config1, config2)
-            )
-
-            # Convert joint angles to end-effector and link positions using forward kinematics
-            # This would typically be done using the robot's forward kinematics model
-            # For now, we'll assume a function robot_fk(config) that returns link positions
-
-            # Use forward kinematics to get robot geometry
-            robot_geometry = self._get_robot_geometry(config)
-
-            # Check for collisions with obstacles
-            for obstacle in self.obstacle_list:
-                if self._check_robot_obstacle_collision(robot_geometry, obstacle):
-                    print("Collision detected!")
-                    return True  # Collision detected
-
-        # No collision detected
-        return False
-
-    def _get_robot_geometry(self, config):
-        """
-        Calculate the position and geometry of each robot link using forward kinematics.
-        Returns a list of geometries representing the robot's links.
-        """
-        full_config = [0.0] * 10
-        full_config[1:7] = config
-        T = self.chain.forward_kinematics(full_config, full_kinematics=True)
-
-        # For now, treat the joints as spheres
-
-        geom = []
-        for i, link in enumerate(self.chain.links):
-
-            pos = T[i][:3, 3]
-            rot = T[i][:3, :3]
-            # Create a geometry representation of the link
-            # For now, we'll just use the position and rotation
-            geom.append(
-                {
-                    "position": pos,
-                    "rotation": rot,
-                    "name": link.name,
-                    "radius": 0.05,  # Placeholder for link radius
-                }
-            )
-
-        return geom
-
-    def _check_robot_obstacle_collision(self, robot_geometry, obstacle):
-        """
-        Check for collision between the robot geometry and an obstacle.
-        Returns True if there is a collision, False otherwise.
-        """
-        # For simplicity, assume obstacles are spheres with a position and radius
-
-        obstacle_position = obstacle["position"]
-        obstacle_radius = obstacle["radius"]
-
-        # Check collision between each robot link and the obstacle
-        for link in robot_geometry:
-            link_position = link["position"]
-            link_radius = link["radius"]
-
-            # Calculate distance between link and obstacle centers
-            distance = math.sqrt(
-                sum((l - o) ** 2 for l, o in zip(link_position, obstacle_position))
-            )
-
-            # Collision if the distance is less than the sum of radii
-            if distance < (link_radius + obstacle_radius):
-                return True
-
-        return False
-
-    def _distance(self, config1, config2):
-        return math.sqrt(sum((c1 - c2) ** 2 for c1, c2 in zip(config1, config2)))
-
-    def _find_near_nodes(self, new_node):
-        near_nodes = []
-
-        n_nodes = len(self.node_list)
-
-        # As a simple heuristic, we can adjust the radius based on the number of nodes
-        SCALING = 5.0
-        radius = min(
-            self.neighbor_radius,
-            math.sqrt(math.log(n_nodes + 1) / (n_nodes + 1)) * SCALING,
-        )
-
-        for node in self.node_list:
-            if self._distance(node.config, new_node.config) < radius:
-                near_nodes.append(node)
-        return near_nodes
-
-    def _reconstruct_path(self):
-        """
-        Traverse the tree from the goal node to the start node
-        and return the path as a list of configurations.
-        """
-        path = []
-
-        current = self.goal
-
-        while current is not None:
-            path.append(current.config)
-            current = current.parent
-
-        # Reverse the path to get it from start to goal
-        return list(reversed(path))
+class SphereObstacle:
+    def __init__(self, center, radius, frame_id):
+        assert len(center) == 3
+        assert radius > 0, "Radius must be positive"
+        self.center = center
+        self.radius = radius
+        self.frame_id = frame_id
 
 
 class ArmTrajectoryPlanner(Node):
@@ -293,48 +83,13 @@ class ArmTrajectoryPlanner(Node):
             10,
         )
 
-        self.target_position = [
-            -0.07324862480163574,
-            0.32391729950904846,
-            0.3905857503414154,
-        ]
-
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-
-        self.plan_sent = False
-        self.plan = None
-        # self.create_timer(1.0, self.try_plan)
-        self.create_timer(0.1, self.execute_plan)
 
         # This stores the current joint angles
         # (including for inactive joints like link_base and the gripper link)
         # Only joints 1-6 are active (zero-indexed)
         self.current_joint_angles = [0.0] * 10
-
-    def execute_plan(self):
-        if self.plan is None or len(self.plan) == 0:
-            return
-
-        msg = JointState()
-        msg.name = self.names
-        msg.position = self.plan[0]
-        self.plan = self.plan[1:]
-        self.joint_command_pub.publish(msg)
-        self.current_joint_angles = msg.position
-        print(f"Executing plan:  {msg.position}")
-
-    def try_plan(self):
-        if self.plan_sent == True:
-            return
-        self.clicked_point_cb(
-            Point(
-                x=self.target_position[0],
-                y=self.target_position[1],
-                z=self.target_position[2],
-            )
-        )
-        self.plan_sent = True
 
     def visualize_obstacles(self, obstacles: list[dict]):
         """
@@ -343,54 +98,123 @@ class ArmTrajectoryPlanner(Node):
         msg = MarkerArray()
         for i, obstacle in enumerate(obstacles):
             marker = Marker()
-            marker.header.frame_id = obstacle["frame_id"]
+            marker.header.frame_id = obstacle.frame_id
             marker.header.stamp = self.get_clock().now().to_msg()
             marker.ns = "obstacle"
             marker.id = i
-            marker.type = Marker.SPHERE
-            marker.action = Marker.ADD
-            marker.pose.position.x = obstacle["position"][0]
-            marker.pose.position.y = obstacle["position"][1]
-            marker.pose.position.z = obstacle["position"][2]
-            marker.scale.x = obstacle["radius"] * 2
-            marker.scale.y = obstacle["radius"] * 2
-            marker.scale.z = obstacle["radius"] * 2
-            marker.color.r = 1.0
-            marker.color.g = 0.0
-            marker.color.b = 0.0
-            marker.color.a = 0.5
+
+            if isinstance(obstacle, BoxObstacle):
+                marker.type = Marker.CUBE
+                marker.scale.x = obstacle.box_max[0] - obstacle.box_min[0]
+                marker.scale.y = obstacle.box_max[1] - obstacle.box_min[1]
+                marker.scale.z = obstacle.box_max[2] - obstacle.box_min[2]
+                marker.pose.position.x = (obstacle.box_min[0] + obstacle.box_max[0]) / 2
+                marker.pose.position.y = (obstacle.box_min[1] + obstacle.box_max[1]) / 2
+                marker.pose.position.z = (obstacle.box_min[2] + obstacle.box_max[2]) / 2
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = 0.0
+                marker.color.a = 0.5
+            elif isinstance(obstacle, SphereObstacle):
+                marker.type = Marker.SPHERE
+                marker.scale.x = obstacle.radius * 2
+                marker.scale.y = obstacle.radius * 2
+                marker.scale.z = obstacle.radius * 2
+                marker.pose.position.x = obstacle.center[0]
+                marker.pose.position.y = obstacle.center[1]
+                marker.pose.position.z = obstacle.center[2]
+                marker.color.r = 0.0
+                marker.color.g = 0.0
+                marker.color.b = 1.0
+                marker.color.a = 0.5
+            else:
+                self.get_logger().error(
+                    "Unsupported obstacle type. Only BoxObstacle and SphereObstacle are supported."
+                )
+                continue
 
             msg.markers.append(marker)
 
         self.obstacle_vis_pub.publish(msg)
 
-    def transform_obstacle(self, obstacle: dict):
+    def transform_obstacle(self, obstacle, target_frame="link_base"):
         """
         Transform the obstacle to the arm's frame
         """
 
         try:
             transform = self.tf_buffer.lookup_transform(
-                "link_base", obstacle["frame_id"], rclpy.time.Time()
+                target_frame, obstacle.frame_id, rclpy.time.Time()
             )
         except tf2_ros.LookupException as e:
             self.get_logger().error(f"Transform not found: {e}")
             return obstacle
 
-        obstacle_point = Point()
-        obstacle_point.x = obstacle["position"][0]
-        obstacle_point.y = obstacle["position"][1]
-        obstacle_point.z = obstacle["position"][2]
-        obstacle_point_transformed = tf2_geometry_msgs.do_transform_point(
-            PointStamped(point=obstacle_point), transform
-        )
-        obstacle["position"] = [
-            obstacle_point_transformed.point.x,
-            obstacle_point_transformed.point.y,
-            obstacle_point_transformed.point.z,
-        ]
-        obstacle["frame_id"] = "link_base"
-        return obstacle
+        if isinstance(obstacle, BoxObstacle):
+            box_min = np.array(obstacle.box_min)
+            box_max = np.array(obstacle.box_max)
+
+            # Transform the box min and max points
+            box_min_transformed = tf2_geometry_msgs.do_transform_point(
+                PointStamped(
+                    header=transform.header,
+                    point=Point(x=box_min[0], y=box_min[1], z=box_min[2]),
+                ),
+                transform,
+            )
+            box_max_transformed = tf2_geometry_msgs.do_transform_point(
+                PointStamped(
+                    header=transform.header,
+                    point=Point(x=box_max[0], y=box_max[1], z=box_max[2]),
+                ),
+                transform,
+            )
+            box_min = [
+                box_min_transformed.point.x,
+                box_min_transformed.point.y,
+                box_min_transformed.point.z,
+            ]
+            box_max = [
+                box_max_transformed.point.x,
+                box_max_transformed.point.y,
+                box_max_transformed.point.z,
+            ]
+
+            transformed_box_min_x = min(box_min[0], box_max[0])
+            transformed_box_min_y = min(box_min[1], box_max[1])
+            transformed_box_min_z = min(box_min[2], box_max[2])
+            transformed_box_max_x = max(box_min[0], box_max[0])
+            transformed_box_max_y = max(box_min[1], box_max[1])
+            transformed_box_max_z = max(box_min[2], box_max[2])
+            return BoxObstacle(
+                [transformed_box_min_x, transformed_box_min_y, transformed_box_min_z],
+                [transformed_box_max_x, transformed_box_max_y, transformed_box_max_z],
+                frame_id=target_frame,
+            )
+
+        elif isinstance(obstacle, SphereObstacle):
+            center = np.array(obstacle.center)
+            radius = obstacle.radius
+
+            # Transform the sphere center
+            center_transformed = tf2_geometry_msgs.do_transform_point(
+                PointStamped(
+                    header=transform.header,
+                    point=Point(x=center[0], y=center[1], z=center[2]),
+                ),
+                transform,
+            )
+            center = [
+                center_transformed.point.x,
+                center_transformed.point.y,
+                center_transformed.point.z,
+            ]
+            return SphereObstacle(center, radius, frame_id=target_frame)
+        else:
+            self.get_logger().error(
+                "Unsupported obstacle type. Only BoxObstacle and SphereObstacle are supported."
+            )
+            return None
 
     def clicked_point_cb(self, msg: Point):
         if not hasattr(self, "chain"):
@@ -428,24 +252,34 @@ class ArmTrajectoryPlanner(Node):
 
         obstacle_list = []
 
-        center = [
-            0.7930782,
-            0.4170361,
-            0.5,
-        ]
-        for x in np.linspace(-0.25, 0.25, 5):
-            for y in np.linspace(-0.15, 0.15, 5):
-                obstacle_list.append(
-                    {
-                        "position": [x + center[0], y + center[1], center[2]],
-                        "radius": 0.05,
-                        "frame_id": "base_link",
-                    }
-                )
+        obstacle_list.append(
+            BoxObstacle([0.7, 0.35, 0.45], [0.9, 0.55, 0.55], frame_id="base_link"),
+        )
+
+        obstacle_list.append(
+            BoxObstacle([-10.0, -10.0, -1.0], [10.0, 10.0, 0.0], frame_id="base_link")
+        )  # Ground
+
+        # center = [
+        #     0.7930782,
+        #     0.4170361,
+        #     0.5,
+        # ]
+        # for x in np.linspace(-0.25, 0.25, 5):
+        #     for y in np.linspace(-0.15, 0.15, 5):
+        #         obstacle_list.append(
+        #             {
+        #                 "position": [x + center[0], y + center[1], center[2]],
+        #                 "radius": 0.05,
+        #                 "frame_id": "base_link",
+        #             }
+        #         )
 
         # Transform obstacles to the arm's frame
         for obstacle in obstacle_list:
+            print(f"Obstacle: {obstacle.box_min} {obstacle.box_max}")
             obstacle = self.transform_obstacle(obstacle)
+            print(f"Transformed obstacle: {obstacle.box_min} {obstacle.box_max}")
 
         self.visualize_obstacles(obstacle_list)
 
@@ -465,14 +299,97 @@ class ArmTrajectoryPlanner(Node):
         self.plan = plan
         print(f"Plan: {plan}")
 
+    def _load_mesh_from_package_path(self, path):
+        assert path.startswith("package://")
+        path = path[len("package://") :]
+        package_name = path.split("/")[0]
+        relative_path = path[len(package_name) :]
+
+        # Get the package share directory
+        package_share_directory = get_package_share_directory(package_name)
+
+        # Remove the "package://" prefix
+        # Construct the full path to the mesh file
+        full_path = package_share_directory + relative_path
+
+        # Load the mesh using trimesh
+        mesh = trimesh.load_mesh(full_path)
+        return mesh
+
+    def show(self):
+        T = self.chain.forward_kinematics(
+            [0.0] * len(self.chain.links), full_kinematics=True
+        )
+
+        scene = trimesh.Scene()
+
+        # Add axes to scene
+        axes = trimesh.creation.axis()
+        scene.add_geometry(axes)
+        scene.add_geometry(self.meshes.get("amiga_chassis_lowpoly"))
+
+        print(self.meshes)
+
+        for i, link in enumerate(self.chain.links):
+            if not isinstance(link, URDFLink):
+                continue
+
+            # Get the mesh for the link
+            mesh = self.meshes.get(link.name.replace("joint", "link"))
+
+            if link.name == "multi_eef_joint":
+                mesh = self.meshes.get("multi_eef_collision")
+            if mesh is not None:
+                # Transform the mesh to the link's frame
+                print(f"Getting transform for {link.name}")
+                mesh.apply_transform(T[i])
+                scene.add_geometry(mesh)
+
+            else:
+                print(f"No mesh found for link {link.name}")
+
+        scene.set_camera(
+            angles=[np.pi / 2, 0.0, np.pi / 2], distance=3.0, center=[0, 0, 0.5]
+        )
+
+        scene.show()
+
     def robot_description_cb(self, msg: String):
+
+        # Parse the URDF as an xml tree
+        root = ET.fromstring(msg.data)
+
+        meshes = {}
+
+        # Find all collision elements, print their mesh filenames
+        for collision in root.findall(".//collision"):
+            mesh = collision.find(".//mesh")
+            if mesh is not None:
+                filename = mesh.get("filename")
+                if filename is not None:
+                    mesh = self._load_mesh_from_package_path(filename)
+                    # Visualize the mesh using trimesh
+                    link_name = filename.split("/")[-1].split(".")[0]
+                    if link_name == "end_tool":
+                        link_name = "link6"
+                    meshes[link_name] = mesh
+                else:
+                    print("No filename attribute found in the mesh element.")
+
+        self.meshes = meshes
+
+        # Change "continuous" to "revolute" in the URDF
+        urdf = msg.data.replace("continuous", "revolute")
+
         with open("/tmp/johnny.urdf", "w") as f:
-            f.write(msg.data)
+            f.write(urdf)
 
         self.chain = Chain.from_urdf_file(
             "/tmp/johnny.urdf",
-            base_elements=["link_base"],
+            base_elements=["base_link", "arm_link_joint"],
             active_links_mask=[
+                False,
+                False,
                 False,
                 True,
                 True,
@@ -485,6 +402,10 @@ class ArmTrajectoryPlanner(Node):
                 False,
             ],
         )
+
+        self.show()
+
+    # def build_prm(self, n_samples = 10000):
 
     def send_random_joint_angle(self):
         if not hasattr(self, "chain"):
@@ -613,16 +534,11 @@ def main(args=None):
 
     planner = ArmTrajectoryPlanner()
 
-    # Use a multithreaded executor to handle callbacks concurrently
-    executor = MultiThreadedExecutor()
-    executor.add_node(planner)
-
     try:
-        executor.spin()
+        rclpy.spin(planner)
     except KeyboardInterrupt:
         pass
     finally:
-        executor.shutdown()
         planner.destroy_node()
         rclpy.shutdown()
 

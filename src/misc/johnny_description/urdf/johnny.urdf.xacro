@@ -139,6 +139,13 @@
             </geometry>
             <material name="white" />
         </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <mesh filename="package://johnny_description/meshes/amiga_chassis_lowpoly.stl" />
+
+            </geometry>
+        </collision>
     </link>
 
 

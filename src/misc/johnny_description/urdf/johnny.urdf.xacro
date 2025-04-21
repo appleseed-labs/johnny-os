@@ -172,7 +172,7 @@
 
     <link name="arm_link" />
     <joint name="arm_link_joint" type="fixed">
-        <origin xyz="0.75 0 0.63" rpy="0 ${PI/2} 0" />
+        <origin xyz="0.68 0 0.63" rpy="0 ${PI/2} 0" />
         <parent link="base_link" />
         <child link="arm_link" />
     </joint>

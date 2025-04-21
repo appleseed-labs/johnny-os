@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from tqdm import trange
 from ament_index_python import get_package_share_directory
 import rclpy
 from rclpy.node import Node
@@ -21,6 +22,7 @@ from ikpy.link import URDFLink
 import tf2_ros
 import trimesh
 import pyglet
+import os
 
 # ROS messages
 from geometry_msgs.msg import Point, PointStamped
@@ -316,9 +318,27 @@ class ArmTrajectoryPlanner(Node):
         mesh = trimesh.load_mesh(full_path)
         return mesh
 
+    def _get_mesh(self, link: URDFLink):
+        """
+        Get the mesh for a given link
+        """
+        if not hasattr(self, "meshes"):
+            self.get_logger().warn("No meshes loaded")
+            return None
+
+        # Get the mesh for the link
+        if link.name == "arm_link_joint":
+            mesh = self.meshes.get("link_base")
+        else:
+            mesh = self.meshes.get(link.name)
+
+        # if mesh is None:
+        #     self.get_logger().warn(f"No mesh found for link {link.name}")
+        return mesh
+
     def show(self):
         T = self.chain.forward_kinematics(
-            [0.0] * len(self.chain.links), full_kinematics=True
+            self.current_joint_angles, full_kinematics=True
         )
 
         scene = trimesh.Scene()
@@ -326,30 +346,32 @@ class ArmTrajectoryPlanner(Node):
         # Add axes to scene
         axes = trimesh.creation.axis()
         scene.add_geometry(axes)
-        scene.add_geometry(self.meshes.get("amiga_chassis_lowpoly"))
+        scene.add_geometry(self.meshes.get("base_link"))
 
-        print(self.meshes)
+        # print(self.meshes)
 
         for i, link in enumerate(self.chain.links):
             if not isinstance(link, URDFLink):
+                print(f"Link {link.name} is not a URDFLink")
                 continue
 
             # Get the mesh for the link
-            mesh = self.meshes.get(link.name.replace("joint", "link"))
-
-            if link.name == "multi_eef_joint":
-                mesh = self.meshes.get("multi_eef_collision")
+            mesh = self._get_mesh(link)
             if mesh is not None:
                 # Transform the mesh to the link's frame
-                print(f"Getting transform for {link.name}")
-                mesh.apply_transform(T[i])
-                scene.add_geometry(mesh)
+
+                # Reset the mesh transform
+
+                transformed_mesh = mesh.copy()
+                transformed_mesh.apply_transform(T[i])
+
+                scene.add_geometry(transformed_mesh)
 
             else:
                 print(f"No mesh found for link {link.name}")
 
         scene.set_camera(
-            angles=[np.pi / 2, 0.0, np.pi / 2], distance=3.0, center=[0, 0, 0.5]
+            angles=[np.pi / 2, 0.0, np.pi / 2], distance=4.0, center=[0, 0, 0.8]
         )
 
         scene.show()
@@ -369,14 +391,37 @@ class ArmTrajectoryPlanner(Node):
                 if filename is not None:
                     mesh = self._load_mesh_from_package_path(filename)
                     # Visualize the mesh using trimesh
-                    link_name = filename.split("/")[-1].split(".")[0]
+                    link_name = (
+                        filename.split("/")[-1].split(".")[0].replace("link", "joint")
+                    )
                     if link_name == "end_tool":
-                        link_name = "link6"
+                        link_name = "joint6"
+
+                    elif link_name == "joint_base":
+                        link_name = "link_base"
+                    elif link_name == "amiga_chassis_lowpoly":
+                        link_name = "base_link"
+
+                    elif link_name == "multi_eef_collision":
+                        link_name = "multi_eef_joint"
                     meshes[link_name] = mesh
                 else:
                     print("No filename attribute found in the mesh element.")
 
         self.meshes = meshes
+
+        # Now create a Trimesh collision manager
+        self.collision_manager = trimesh.collision.CollisionManager()
+        for link_name, mesh in meshes.items():
+            # Add the mesh to the collision manager
+            print(
+                f"Adding {link_name} to collision manager with {mesh.vertices.shape[0]} vertices"
+            )
+            self.collision_manager.add_object(link_name, mesh)
+
+            if link_name == "link_base":
+                # Set the base link to be static
+                self.collision_manager.add_object("arm_link_joint", mesh)
 
         # Change "continuous" to "revolute" in the URDF
         urdf = msg.data.replace("continuous", "revolute")
@@ -403,9 +448,94 @@ class ArmTrajectoryPlanner(Node):
             ],
         )
 
-        self.show()
+        self.chain.links[0].name = "base_link"
 
-    # def build_prm(self, n_samples = 10000):
+        try:
+            self.prm = np.load(
+                os.path.join(
+                    get_package_share_directory("arm_planning"), "data", "prm.npy"
+                )
+            )
+            self.get_logger().info(f"PRM loaded with {len(self.prm)} samples")
+        except FileNotFoundError:
+            self.get_logger().warn("PRM not found, generating new PRM")
+            self.build_prm(1000)
+            self.save_prm()
+
+    def save_prm(self):
+        """Save the PRM to a .npy file"""
+
+        package_share_directory = get_package_share_directory("arm_planning")
+        import os
+
+        prm_path = os.path.join(package_share_directory, "data", "prm.npy")
+
+        # Create the path if necessary
+
+        os.makedirs(os.path.dirname(prm_path), exist_ok=True)
+        np.save(prm_path, self.prm)
+        self.get_logger().info(f"PRM saved to {prm_path}")
+
+    def build_prm(self, n_samples=10000):
+
+        valid_joint_configs = []
+
+        for i in trange(n_samples):
+            q = [0.0] * len(self.chain.links)
+            names = []
+            for i, link in enumerate(self.chain.links):
+                if not isinstance(link, URDFLink) or link.joint_type == "fixed":
+                    continue
+
+                q[i] = random.uniform(link.bounds[0], link.bounds[1])
+                names.append(link.name)
+
+            self.current_joint_angles = q
+
+            T = self.chain.forward_kinematics(q, full_kinematics=True)
+
+            # Update the transforms in the collision manager
+            for i, link in enumerate(self.chain.links):
+                if not isinstance(link, URDFLink):
+                    continue
+
+                # Get the mesh for the link
+                mesh = self._get_mesh(link)
+                if mesh is not None:
+                    self.collision_manager.set_transform(link.name, T[i])
+
+            (
+                in_collision,
+                objects_in_collision,
+            ) = self.collision_manager.in_collision_internal(return_names=True)
+
+            # self_collision_okay = [
+            #     ("joint6", "multi_eef_joint"),
+            #     ("arm_link_joint", "base_link"),
+            # ]
+
+            # num_accounted_for_objects = 0
+            # for obj1, obj2 in self_collision_okay:
+            #     for obj3, obj4 in objects_in_collision:
+            #         if obj1 == obj3 and obj2 == obj4:
+            #             num_accounted_for_objects += 1
+            #         elif obj1 == obj4 and obj2 == obj3:
+            #             num_accounted_for_objects += 1
+
+            # if num_accounted_for_objects == len(self_collision_okay):
+            #     in_collision = False
+
+            if in_collision and len(objects_in_collision) > 2:
+                continue
+
+            else:
+                valid_joint_configs.append(q)
+
+            # if in_collision:
+            #     self.show()
+            #     exit()
+
+        self.prm = valid_joint_configs
 
     def send_random_joint_angle(self):
         if not hasattr(self, "chain"):

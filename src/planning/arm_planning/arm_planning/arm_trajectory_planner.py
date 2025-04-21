@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import heapq
 from tqdm import trange
 from ament_index_python import get_package_share_directory
 import rclpy
@@ -85,13 +86,63 @@ class ArmTrajectoryPlanner(Node):
             10,
         )
 
+        self.create_subscription(JointState, "/joint_states", self.joint_state_cb, 1)
+
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         # This stores the current joint angles
         # (including for inactive joints like link_base and the gripper link)
         # Only joints 1-6 are active (zero-indexed)
-        self.current_joint_angles = [0.0] * 10
+        self.current_joint_angles = None
+
+        self.create_timer(1.0, self.publish_path)
+
+    def publish_path(self):
+
+        if not hasattr(self, "path") or len(self.path) == 0:
+            return
+
+        msg = JointState()
+        print(self.path[0])
+        msg.position = [float(q) for q in self.path[0]]
+
+        active_names = []
+        active_link_mask = self.chain.active_links_mask
+        for i, link in enumerate(self.chain.links):
+            if not isinstance(link, URDFLink) or link.joint_type == "fixed":
+                continue
+
+            if active_link_mask[i]:
+                active_names.append(link.name)
+
+        print(active_names)
+
+        msg.name = active_names
+        self.joint_command_pub.publish(msg)
+
+        self.path.pop(0)
+
+    def joint_state_cb(self, msg: JointState):
+        """
+        Callback for joint states
+        """
+
+        if not hasattr(self, "chain"):
+            self.get_logger().warn(
+                "Chain not initialized. Waiting for robot_description."
+            )
+            return
+
+        names_in_chain = [link.name for link in self.chain.links]
+
+        self.current_joint_angles = [0.0] * len(names_in_chain)
+
+        # Update the current joint angles
+        for i, name in enumerate(msg.name):
+            if name in names_in_chain:
+                index = names_in_chain.index(name)
+                self.current_joint_angles[index] = msg.position[i]
 
     def visualize_obstacles(self, obstacles: list[dict]):
         """
@@ -225,6 +276,12 @@ class ArmTrajectoryPlanner(Node):
             )
             return
 
+        if not hasattr(self, "prm"):
+            self.get_logger().warn(
+                "PRM not initialized. Waiting for robot_description."
+            )
+            return
+
         print(f"Clicked point: {msg.x}, {msg.y}, {msg.z}")
 
         links: list[URDFLink] = self.chain.links
@@ -243,63 +300,203 @@ class ArmTrajectoryPlanner(Node):
         target_pos = [msg.x, msg.y, msg.z]
         target_rot = [1.0, 0.0, 0.0]
 
-        ik = self.chain.inverse_kinematics(target_pos, target_rot, orientation_mode="X")
+        ik = self.chain.inverse_kinematics(target_pos)
 
-        target_positions = [float(x) for x in ik[1:7]]
-        print(target_positions)
+        goal_config = [float(x) for x in self.chain.active_from_full(ik)]
+        print(goal_config)
         print(names)
         self.names = names
 
-        print(f"Planning path from {self.current_joint_angles} to {target_positions}")
+        start_config = self.chain.active_from_full(self.current_joint_angles)
+        print(f"Planning path from ({target_pos}) {start_config} to {goal_config}")
 
-        obstacle_list = []
+        valid_configs = self.prm.tolist()
+        valid_configs.append(start_config)
+        valid_configs.append(goal_config)
 
-        obstacle_list.append(
-            BoxObstacle([0.7, 0.35, 0.45], [0.9, 0.55, 0.55], frame_id="base_link"),
+        # Check that each configuration has six elements
+        assert all(
+            len(config) == 6 for config in valid_configs
+        ), "All configurations must have six elements"
+
+        path = self.a_star_robot_arm(
+            start_config,
+            goal_config,
+            valid_configs,
+            neighbor_dist_threshold=2.0,
         )
 
-        obstacle_list.append(
-            BoxObstacle([-10.0, -10.0, -1.0], [10.0, 10.0, 0.0], frame_id="base_link")
-        )  # Ground
+        if path:
+            print(f"Path found with {len(path)} configurations:")
+            configs = []
+            for i, config in enumerate(path):
+                print(f"Step {i}: {config}")
+                configs.append(config)
 
-        # center = [
-        #     0.7930782,
-        #     0.4170361,
-        #     0.5,
-        # ]
-        # for x in np.linspace(-0.25, 0.25, 5):
-        #     for y in np.linspace(-0.15, 0.15, 5):
-        #         obstacle_list.append(
-        #             {
-        #                 "position": [x + center[0], y + center[1], center[2]],
-        #                 "radius": 0.05,
-        #                 "frame_id": "base_link",
-        #             }
-        #         )
+            self.path = configs
 
-        # Transform obstacles to the arm's frame
-        for obstacle in obstacle_list:
-            print(f"Obstacle: {obstacle.box_min} {obstacle.box_max}")
-            obstacle = self.transform_obstacle(obstacle)
-            print(f"Transformed obstacle: {obstacle.box_min} {obstacle.box_max}")
+            # Calculate total path cost
+            total_cost = 0
+            for i in range(len(path) - 1):
+                total_cost += self.joint_distance(path[i], path[i + 1])
+            print(f"Total path cost: {total_cost}")
+        else:
+            print(
+                "No path found. Try increasing the neighbor_dist_threshold or adding more valid configurations."
+            )
 
-        self.visualize_obstacles(obstacle_list)
+    def a_star_robot_arm(
+        self,
+        start_config,
+        goal_config,
+        valid_configs,
+        neighbor_dist_threshold=0.1,
+    ):
+        """
+        Implementation of A* algorithm for a robot arm path planning.
 
-        planner = RRTStarPlanner(
-            start=self.current_joint_angles,
-            goal=target_positions,
-            obstacle_list=obstacle_list,
-            chain=self.chain,
-            bounds=limits,
-            max_iters=1000,
-        )
-        plan = planner.plan()
-        if plan is None:
-            self.get_logger().warn("No path found")
-            return
+        Args:
+            start_config: Initial joint configuration (numpy array)
+            goal_config: Target joint configuration (numpy array)
+            valid_configs: List of all valid configurations (list of numpy arrays)
+            neighbor_dist_threshold: Maximum distance for configurations to be considered neighbors
 
-        self.plan = plan
-        print(f"Plan: {plan}")
+        Returns:
+            List of configurations forming a path from start to goal if found, otherwise None
+        """
+
+        # Convert configs to tuples for hashing
+        start_tuple = tuple(map(float, start_config))
+        goal_tuple = tuple(map(float, goal_config))
+
+        # Convert valid_configs to a set of tuples for faster lookup
+        valid_config_tuples = {tuple(map(float, config)) for config in valid_configs}
+
+        # Ensure start and goal are in valid configs
+        valid_config_tuples.add(start_tuple)
+        valid_config_tuples.add(goal_tuple)
+
+        # Counter for tie-breaking in the priority queue
+        counter = 0
+
+        # Priority queue for open set (f_score, counter, config_tuple)
+        open_set = [
+            (self.joint_distance(start_config, goal_config), counter, start_tuple)
+        ]
+        counter += 1
+
+        # Set to track nodes in open set for quick lookup
+        open_set_hash = {start_tuple}
+
+        # Dictionary to store g_scores (cost from start to node)
+        g_score = {start_tuple: 0}
+
+        # Dictionary to store f_scores (g_score + heuristic)
+        f_score = {start_tuple: self.joint_distance(start_config, goal_config)}
+
+        # Dictionary to store parent nodes for path reconstruction
+        came_from = {}
+
+        # Set to keep track of visited nodes
+        closed_set = set()
+
+        # Find neighboring configurations that are within the distance threshold
+        def find_neighbors(config_tuple):
+            """Find valid configurations that are nearby in configuration space"""
+            neighbors = []
+            config = np.array(config_tuple)
+
+            for valid_tuple in valid_config_tuples:
+                # Skip the current configuration and already visited ones
+                if valid_tuple == config_tuple or valid_tuple in closed_set:
+                    continue
+
+                valid_config = np.array(valid_tuple)
+
+                # Check if distance is within threshold
+                if self.joint_distance(config, valid_config) <= neighbor_dist_threshold:
+                    neighbors.append(valid_tuple)
+
+            return neighbors
+
+        # Main A* loop
+        while open_set:
+            # Get node with lowest f_score
+            _, _, current_tuple = heapq.heappop(open_set)
+            open_set_hash.remove(current_tuple)
+
+            # If already visited, skip
+            if current_tuple in closed_set:
+                continue
+
+            # Add to closed set
+            closed_set.add(current_tuple)
+
+            # Check if goal is reached (using approximate equality for floating point)
+            if np.allclose(np.array(current_tuple), goal_config, atol=1e-6):
+                # Reconstruct path
+                path = [np.array(current_tuple)]
+                temp_tuple = current_tuple
+                while temp_tuple in came_from:
+                    temp_tuple = came_from[temp_tuple]
+                    path.append(np.array(temp_tuple))
+                path.reverse()
+                return path
+
+            # Get neighboring configurations
+            neighbors = find_neighbors(current_tuple)
+
+            for neighbor_tuple in neighbors:
+                # Calculate tentative g_score (cost from start to neighbor through current)
+                tentative_g_score = g_score[current_tuple] + self.joint_distance(
+                    np.array(current_tuple), np.array(neighbor_tuple)
+                )
+
+                # If new path is better
+                if (
+                    neighbor_tuple not in g_score
+                    or tentative_g_score < g_score[neighbor_tuple]
+                ):
+                    # Update path
+                    came_from[neighbor_tuple] = current_tuple
+                    g_score[neighbor_tuple] = tentative_g_score
+
+                    # f_score = g_score + heuristic
+                    f_score_val = tentative_g_score + self.joint_distance(
+                        np.array(neighbor_tuple), goal_config
+                    )
+                    f_score[neighbor_tuple] = f_score_val
+
+                    # Add to open set if not already there
+                    if neighbor_tuple not in open_set_hash:
+                        heapq.heappush(open_set, (f_score_val, counter, neighbor_tuple))
+                        counter += 1
+                        open_set_hash.add(neighbor_tuple)
+
+        # No path found
+        return None
+
+    def joint_distance(self, config1, config2, weights=None):
+        """
+        Calculate weighted Euclidean distance between joint configurations.
+
+        Args:
+            config1, config2: Joint configurations to compare
+            weights: Optional weights for each joint (Default: equal weights)
+
+        Returns:
+            Weighted Euclidean distance between configurations
+        """
+
+        diff = np.array(config1) - np.array(config2)
+
+        if weights is None:
+            weights = np.ones_like(diff)
+
+        # Apply weights to the difference (can give more importance to proximal joints)
+        weighted_diff = diff * weights
+
+        return np.linalg.norm(weighted_diff)
 
     def _load_mesh_from_package_path(self, path):
         assert path.startswith("package://")
@@ -459,7 +656,7 @@ class ArmTrajectoryPlanner(Node):
             self.get_logger().info(f"PRM loaded with {len(self.prm)} samples")
         except FileNotFoundError:
             self.get_logger().warn("PRM not found, generating new PRM")
-            self.build_prm(1000)
+            self.build_prm(10000)
             self.save_prm()
 
     def save_prm(self):
@@ -526,10 +723,11 @@ class ArmTrajectoryPlanner(Node):
             #     in_collision = False
 
             if in_collision and len(objects_in_collision) > 2:
+                # self.show()
                 continue
 
             else:
-                valid_joint_configs.append(q)
+                valid_joint_configs.append(self.chain.active_from_full(q))
 
             # if in_collision:
             #     self.show()
@@ -563,7 +761,7 @@ class ArmTrajectoryPlanner(Node):
             target_pos, target_rot, orientation_mode="all"
         )
 
-        positions = [float(x) for x in ik[1:7]]
+        positions = [float(x) for x in self.chain.active_from_full(ik)]
 
         msg = JointState()
         msg.name = names

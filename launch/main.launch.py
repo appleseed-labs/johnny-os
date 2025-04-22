@@ -90,6 +90,11 @@ def generate_launch_description():
         ],
     )
 
+    joy_node = Node(
+        package="joy",
+        executable="joy_node",
+    )
+
     return LaunchDescription(
         [
             # INFRASTRUCTURE
@@ -98,6 +103,7 @@ def generate_launch_description():
             # INTERFACES
             # rosbridge_server,
             # unity_endpoint,
+            joy_node,
             swiftnav_interface,
             # PERCEPTION
             # PLANNING

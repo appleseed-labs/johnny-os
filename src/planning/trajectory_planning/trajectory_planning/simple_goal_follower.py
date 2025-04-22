@@ -56,9 +56,9 @@ class SimpleGoalFollower(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # Controller parameters
-        self.declare_parameter("linear_gain", 0.5)
-        self.declare_parameter("angular_gain", 1.0)
-        self.declare_parameter("distance_tolerance", 0.1)
+        self.declare_parameter("linear_gain", 0.1)
+        self.declare_parameter("angular_gain", 0.10)
+        self.declare_parameter("distance_tolerance", 0.3)
         self.declare_parameter("control_frequency", 10.0)
 
         self.linear_gain = self.get_parameter("linear_gain").value
@@ -175,9 +175,13 @@ class SimpleGoalFollower(Node):
         dy = goal_in_map.position.y - robot_pose.position.y
         distance = math.sqrt(dx * dx + dy * dy)
 
+        print(f"robot pos: {robot_pose.position.x:.2f}, {robot_pose.position.y:.2f}")
+        print(f"goal  pos: {goal_in_map.position.x:.2f}, {goal_in_map.position.y:.2f}")
+
         # Calculate heading error
         desired_heading = math.atan2(dy, dx)
         robot_yaw = self.get_yaw_from_quaternion(robot_pose.orientation)
+
         heading_error = desired_heading - robot_yaw
 
         # Normalize heading error to [-pi, pi]
@@ -188,6 +192,9 @@ class SimpleGoalFollower(Node):
 
         # Create and publish Twist message
         twist = Twist()
+        print(
+            f"d: {distance}, robot_yaw: {robot_yaw}. desired_heading: {desired_heading}"
+        )
 
         # Check if we've reached the goal
         if distance < self.distance_tolerance:
@@ -204,6 +211,9 @@ class SimpleGoalFollower(Node):
             twist.linear.x = self.linear_gain * distance * angular_factor
             twist.angular.z = self.angular_gain * heading_error
 
+        self.get_logger().info(
+            f"Twist: linear.x={twist.linear.x}, angular.z={twist.angular.z}"
+        )
         self.twist_pub.publish(twist)
 
 

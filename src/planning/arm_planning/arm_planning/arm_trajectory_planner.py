@@ -18,43 +18,82 @@ import math
 from threading import Lock
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from scipy.spatial.transform import Rotation as R
-from ikpy.chain import Chain
-from ikpy.link import URDFLink
-import tf2_ros
-import trimesh
-import pyglet
-import os
 
-# ROS messages
-from geometry_msgs.msg import Point, PointStamped
-from visualization_msgs.msg import MarkerArray, Marker
-import tf2_geometry_msgs
-
-
-class BoxObstacle:
-    def __init__(self, box_min, box_max, frame_id):
-        assert len(box_min) == 3
-        assert len(box_max) == 3
-        assert all(
-            box_min[i] <= box_max[i] for i in range(3)
-        ), "Box min must be less than or equal to box max"
-        self.box_min = box_min
-        self.box_max = box_max
-        self.frame_id = frame_id
-
-
-class SphereObstacle:
-    def __init__(self, center, radius, frame_id):
-        assert len(center) == 3
-        assert radius > 0, "Radius must be positive"
-        self.center = center
-        self.radius = radius
-        self.frame_id = frame_id
+pos_dictionary = {
+    "home": [
+        -0.32572651,
+        -80.93894022,
+        -14.3142046,
+        -188.32544039,
+        -7.37580029,
+        -170.15998538,
+        0.0,
+    ],
+    "ready": [
+        130.09470834,
+        33.48371084,
+        -139.9335396,
+        -68.80289198,
+        129.62064306,
+        -175.63041452,
+        0.0,
+    ],
+    "seedling_1_pre": [
+        117.616547,
+        -12.89321197,
+        -55.8271168,
+        -53.73828456,
+        99.10324932,
+        -147.33598243,
+        0.0,
+    ],
+    "seedling_1_grab": [
+        116.8671755,
+        -9.62150837,
+        -51.20936345,
+        -53.80446119,
+        96.2770204,
+        -138.36598437,
+        0.0,
+    ],
+    "seedling_1_lift": [
+        138.18154925,
+        11.32691724,
+        -77.62907763,
+        -43.34248103,
+        115.49729071,
+        -129.13036308,
+        0.0,
+    ],
+    "over_hole": [-29.1542, 16.5677, -28.8071, -176.041, 62.1542, -158.9843, 0.0],
+    "to_hole_1": [73.9455, -4.1437, -91.7979, -64.7164, 76.854, -187.4988, 0.0],
+    "to_hole_2": [7.449, -51.7186, -27.6111, -84.6549, 8.9232, -187.504, 0.0],
+}
 
 
 class ArmTrajectoryPlanner(Node):
     def __init__(self):
         super().__init__("arm_trajectory_planner")
+
+        # Create callback group for concurrent callbacks
+        self.callback_group = ReentrantCallbackGroup()
+
+        # Current joint state
+        self.current_joint_state = None
+        self.joint_state_lock = Lock()
+
+        # Robot description (URDF)
+        self.robot_description = None
+        self.robot_model = None
+
+        # Subscribers
+        self.joint_state_sub = self.create_subscription(
+            JointState,
+            "/joint_states",
+            self.joint_state_callback,
+            10,
+            callback_group=self.callback_group,
+        )
 
         # QoS profile for getting the latest robot_description (transient local)
         robot_description_qos = QoSProfile(
@@ -70,210 +109,143 @@ class ArmTrajectoryPlanner(Node):
             qos_profile=robot_description_qos,
         )
 
-        self.joint_command_pub = self.create_publisher(
-            JointState,
-            "/joint_commands",
-            10,
-        )
+        # Publisher for joint commands
+        self.joint_command_pub = self.create_publisher(JointState, "/joint_command", 10)
 
-        self.clicked_point_sub = self.create_subscription(
-            Point, "/ecosim/clicked_point", self.clicked_point_cb, 1
-        )
+        self.get_logger().info("Arm Trajectory Planner initialized")
 
-        self.obstacle_vis_pub = self.create_publisher(
-            MarkerArray,
-            "/obstacle_visualization",
-            10,
-        )
+    def joint_state_callback(self, msg):
+        with self.joint_state_lock:
+            self.current_joint_state = msg
+            self.get_logger().debug(f"Received joint state: {msg.position}")
 
-        self.create_subscription(JointState, "/joint_states", self.joint_state_cb, 1)
+    def send_test_pose(self):
+        test_pose = Pose()
+        test_pose.position.x = 0.5
+        test_pose.position.y = 0.0
+        test_pose.position.z = 1.5
+        test_pose.orientation.x = 0.0
+        test_pose.orientation.y = 0.0
+        test_pose.orientation.z = 0.0
+        test_pose.orientation.w = 1.0
+        self.get_logger().info(f"Publishing test pose: {test_pose.position}")
 
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.test_pose_pub.publish(test_pose)
 
-        # This stores the current joint angles
-        # (including for inactive joints like link_base and the gripper link)
-        # Only joints 1-6 are active (zero-indexed)
-        self.current_joint_angles = None
+    def robot_description_callback(self, msg):
+        pass
 
-        self.create_timer(1.0, self.publish_path)
-
-    def publish_path(self):
-
-        if not hasattr(self, "path") or len(self.path) == 0:
+    def parse_robot_description(self):
+        if self.robot_description is None:
             return
-
-        msg = JointState()
-        print(self.path[0])
-        msg.position = [float(q) for q in self.path[0]]
-
-        active_names = []
-        active_link_mask = self.chain.active_links_mask
-        for i, link in enumerate(self.chain.links):
-            if not isinstance(link, URDFLink) or link.joint_type == "fixed":
-                continue
-
-            if active_link_mask[i]:
-                active_names.append(link.name)
-
-        print(active_names)
-
-        msg.name = active_names
-        self.joint_command_pub.publish(msg)
-
-        self.path.pop(0)
-
-    def joint_state_cb(self, msg: JointState):
-        """
-        Callback for joint states
-        """
-
-        if not hasattr(self, "chain"):
-            self.get_logger().warn(
-                "Chain not initialized. Waiting for robot_description."
-            )
-            return
-
-        names_in_chain = [link.name for link in self.chain.links]
-
-        self.current_joint_angles = [0.0] * len(names_in_chain)
-
-        # Update the current joint angles
-        for i, name in enumerate(msg.name):
-            if name in names_in_chain:
-                index = names_in_chain.index(name)
-                self.current_joint_angles[index] = msg.position[i]
-
-    def visualize_obstacles(self, obstacles: list[dict]):
-        """
-        Visualize each obstacle as a sphere in RViz
-        """
-        msg = MarkerArray()
-        for i, obstacle in enumerate(obstacles):
-            marker = Marker()
-            marker.header.frame_id = obstacle.frame_id
-            marker.header.stamp = self.get_clock().now().to_msg()
-            marker.ns = "obstacle"
-            marker.id = i
-
-            if isinstance(obstacle, BoxObstacle):
-                marker.type = Marker.CUBE
-                marker.scale.x = obstacle.box_max[0] - obstacle.box_min[0]
-                marker.scale.y = obstacle.box_max[1] - obstacle.box_min[1]
-                marker.scale.z = obstacle.box_max[2] - obstacle.box_min[2]
-                marker.pose.position.x = (obstacle.box_min[0] + obstacle.box_max[0]) / 2
-                marker.pose.position.y = (obstacle.box_min[1] + obstacle.box_max[1]) / 2
-                marker.pose.position.z = (obstacle.box_min[2] + obstacle.box_max[2]) / 2
-                marker.color.r = 1.0
-                marker.color.g = 0.0
-                marker.color.b = 0.0
-                marker.color.a = 0.5
-            elif isinstance(obstacle, SphereObstacle):
-                marker.type = Marker.SPHERE
-                marker.scale.x = obstacle.radius * 2
-                marker.scale.y = obstacle.radius * 2
-                marker.scale.z = obstacle.radius * 2
-                marker.pose.position.x = obstacle.center[0]
-                marker.pose.position.y = obstacle.center[1]
-                marker.pose.position.z = obstacle.center[2]
-                marker.color.r = 0.0
-                marker.color.g = 0.0
-                marker.color.b = 1.0
-                marker.color.a = 0.5
-            else:
-                self.get_logger().error(
-                    "Unsupported obstacle type. Only BoxObstacle and SphereObstacle are supported."
-                )
-                continue
-
-            msg.markers.append(marker)
-
-        self.obstacle_vis_pub.publish(msg)
-
-    def transform_obstacle(self, obstacle, target_frame="link_base"):
-        """
-        Transform the obstacle to the arm's frame
-        """
 
         try:
-            transform = self.tf_buffer.lookup_transform(
-                target_frame, obstacle.frame_id, rclpy.time.Time()
-            )
-        except tf2_ros.LookupException as e:
-            self.get_logger().error(f"Transform not found: {e}")
-            return obstacle
+            root = ET.fromstring(self.robot_description)
 
-        if isinstance(obstacle, BoxObstacle):
-            box_min = np.array(obstacle.box_min)
-            box_max = np.array(obstacle.box_max)
+            # Extract joint limits
+            self.joint_limits = {}
 
-            # Transform the box min and max points
-            box_min_transformed = tf2_geometry_msgs.do_transform_point(
-                PointStamped(
-                    header=transform.header,
-                    point=Point(x=box_min[0], y=box_min[1], z=box_min[2]),
-                ),
-                transform,
+            for joint in root.findall(".//joint"):
+                joint_name = joint.get("name")
+                joint_type = joint.get("type")
+
+                if joint_type in ["revolute", "prismatic"]:
+                    limit = joint.find("limit")
+                    if limit is not None:
+                        lower = float(limit.get("lower", -np.pi))
+                        upper = float(limit.get("upper", np.pi))
+                        self.joint_limits[joint_name] = (lower, upper)
+
+                        # Set hard-coded velocity and acceleration limits for each joint
+                        self.joint_velocity_limits[joint_name] = 1.0  # rad/s
+                        self.joint_acceleration_limits[joint_name] = 2.0  # rad/s^2
+
+            # Simplified robot model for collision checking
+            self.robot_model = {"joints": list(self.joint_limits.keys()), "links": []}
+
+            for link in root.findall(".//link"):
+                link_name = link.get("name")
+                collision = link.find("collision")
+                if collision is not None:
+                    geometry = collision.find("geometry")
+                    if geometry is not None:
+                        # Use a bounding box for each link
+                        link_bbox = self.extract_bounding_box(geometry)
+                        self.robot_model["links"].append(
+                            {"name": link_name, "bbox": link_bbox}
+                        )
+
+            self.get_logger().info(
+                f'Parsed {len(self.joint_limits)} joints and {len(self.robot_model["links"])} links'
             )
-            box_max_transformed = tf2_geometry_msgs.do_transform_point(
-                PointStamped(
-                    header=transform.header,
-                    point=Point(x=box_max[0], y=box_max[1], z=box_max[2]),
-                ),
-                transform,
-            )
-            box_min = [
-                box_min_transformed.point.x,
-                box_min_transformed.point.y,
-                box_min_transformed.point.z,
+
+        except Exception as e:
+            self.get_logger().error(f"Error parsing robot description: {str(e)}")
+
+    def extract_bounding_box(self, geometry):
+        # Extract bounding box from geometry element
+        box = geometry.find("box")
+        if box is not None:
+            size = box.get("size", "0.1 0.1 0.1").split()
+            return [
+                -float(size[0]) / 2,
+                -float(size[1]) / 2,
+                -float(size[2]) / 2,
+                float(size[0]) / 2,
+                float(size[1]) / 2,
+                float(size[2]) / 2,
             ]
-            box_max = [
-                box_max_transformed.point.x,
-                box_max_transformed.point.y,
-                box_max_transformed.point.z,
-            ]
 
-            transformed_box_min_x = min(box_min[0], box_max[0])
-            transformed_box_min_y = min(box_min[1], box_max[1])
-            transformed_box_min_z = min(box_min[2], box_max[2])
-            transformed_box_max_x = max(box_min[0], box_max[0])
-            transformed_box_max_y = max(box_min[1], box_max[1])
-            transformed_box_max_z = max(box_min[2], box_max[2])
-            return BoxObstacle(
-                [transformed_box_min_x, transformed_box_min_y, transformed_box_min_z],
-                [transformed_box_max_x, transformed_box_max_y, transformed_box_max_z],
-                frame_id=target_frame,
-            )
+        cylinder = geometry.find("cylinder")
+        if cylinder is not None:
+            radius = float(cylinder.get("radius", "0.1"))
+            length = float(cylinder.get("length", "0.1"))
+            return [-radius, -radius, -length / 2, radius, radius, length / 2]
 
-        elif isinstance(obstacle, SphereObstacle):
-            center = np.array(obstacle.center)
-            radius = obstacle.radius
+        sphere = geometry.find("sphere")
+        if sphere is not None:
+            radius = float(sphere.get("radius", "0.1"))
+            return [-radius, -radius, -radius, radius, radius, radius]
 
-            # Transform the sphere center
-            center_transformed = tf2_geometry_msgs.do_transform_point(
-                PointStamped(
-                    header=transform.header,
-                    point=Point(x=center[0], y=center[1], z=center[2]),
-                ),
-                transform,
-            )
-            center = [
-                center_transformed.point.x,
-                center_transformed.point.y,
-                center_transformed.point.z,
-            ]
-            return SphereObstacle(center, radius, frame_id=target_frame)
-        else:
-            self.get_logger().error(
-                "Unsupported obstacle type. Only BoxObstacle and SphereObstacle are supported."
-            )
-            return None
+        # Default small box if no geometry is specified
+        return [-0.05, -0.05, -0.05, 0.05, 0.05, 0.05]
 
-    def clicked_point_cb(self, msg: Point):
-        if not hasattr(self, "chain"):
-            self.get_logger().warn(
-                "Chain not initialized. Waiting for robot_description."
-            )
+    def extract_joint_positions(self, msg: JointState):
+        """
+        Extract joint positions from a JointState message
+
+        Only consider joints with "joint" in their name, e.g. "joint1", "joint2"
+        """
+        joint_positions = [0.0] * self.num_joints
+        for i, name in enumerate(msg.name):
+            if name[:5] == "joint":
+                joint_number = int(name.replace("joint", ""))
+                joint_positions[joint_number - 1] = msg.position[i]
+        return joint_positions
+
+    def plan_and_execute_trajectory(self, target_pose):
+        self.get_logger().info("Planning trajectory...")
+
+        # Get current joint state
+        with self.joint_state_lock:
+            if self.current_joint_state is None:
+                self.get_logger().error("No joint state available")
+                return
+
+            start_state = self.extract_joint_positions(self.current_joint_state)
+            print(f"Start state: {start_state}")
+            # start_state = list(self.current_joint_state.position)
+
+        # Convert target pose to joint space (inverse kinematics)
+        self.get_logger().info(
+            f"Calculating IK for target pose: {target_pose.position}"
+        )
+        goal_state = self.inverse_kinematics(target_pose)
+        self.get_logger().info(f"Goal state is {goal_state}")
+        self.get_logger().info(f"Start state is {start_state}")
+
+        if goal_state is None:
+            self.get_logger().error("Failed to compute inverse kinematics")
             return
 
         if not hasattr(self, "prm"):

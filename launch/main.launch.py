@@ -97,8 +97,8 @@ def generate_launch_description():
             # robot_state_publisher_node,
             # INTERFACES
             # rosbridge_server,
-            unity_endpoint,
-            # swiftnav_interface,
+            # unity_endpoint,
+            swiftnav_interface,
             # PERCEPTION
             # PLANNING
             fix_to_transform_node,
@@ -106,7 +106,7 @@ def generate_launch_description():
             # trajectory_planner,
             # waypoint_publisher,
             # VISUALIZATION
-            rviz2,
+            # rviz2,
         ]
         # + controller_nodes
     )

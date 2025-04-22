@@ -33,6 +33,7 @@ from time import sleep
 from std_msgs.msg import Bool, Empty
 
 from xarm.wrapper import XArmAPI
+import serial
 
 # from ikpy.chain import Chain
 # from ikpy.link import Link
@@ -40,23 +41,56 @@ from xarm.wrapper import XArmAPI
 
 from enum import Enum
 
-# Create an enum that maps the error code to a string
-ERROR_CODE_MAP = {
-    2: "ESTOP_ACTIVE",
-    22: "SELF_COLLISION",
+pos_dictionary = {
+    "home": [
+        -0.32572651,
+        -80.93894022,
+        -14.3142046,
+        -188.32544039,
+        -7.37580029,
+        -170.15998538,
+        0.0,
+    ],
+    "ready": [
+        130.09470834,
+        33.48371084,
+        -139.9335396,
+        -68.80289198,
+        129.62064306,
+        -175.63041452,
+        0.0,
+    ],
+    "seedling_1_pre": [
+        117.616547,
+        -12.89321197,
+        -55.8271168,
+        -53.73828456,
+        99.10324932,
+        -147.33598243,
+        0.0,
+    ],
+    "seedling_1_grab": [
+        116.8671755,
+        -9.62150837,
+        -51.20936345,
+        -53.80446119,
+        96.2770204,
+        -138.36598437,
+        0.0,
+    ],
+    "seedling_1_lift": [
+        138.18154925,
+        11.32691724,
+        -77.62907763,
+        -43.34248103,
+        115.49729071,
+        -129.13036308,
+        0.0,
+    ],
+    "over_hole": [-29.1542, 16.5677, -28.8071, -176.041, 62.1542, -158.9843, 0.0],
+    "to_hole_1": [73.9455, -4.1437, -91.7979, -64.7164, 76.854, -187.4988, 0.0],
+    "to_hole_2": [7.449, -51.7186, -27.6111, -84.6549, 8.9232, -187.504, 0.0],
 }
-
-HOME_Q = [0, 0, 0, 0, 0, 0]
-OVERHEAD_Q = [0, -56.1, -34.9, 0, 0, 0]
-READY_Q = [95.1, -40.6, -17.9, 34.2, -11.3, -23.5]
-
-
-# Create an enum for the pose FSM
-class PoseState(Enum):
-    HOME = 0
-    OVERHEAD = 1
-    READY = 2
-    UNKNOWN = 3
 
 
 class JointTrajectory:
@@ -153,20 +187,24 @@ class XarmControlNode(Node):
         )
 
         self.create_subscription(
-            Empty, "/behavior/start_planting", self.startPlantingCb, 1
+            Empty, "/behavior/start_planting", self.start_planting_cb, 1
         )
 
         self.start_driving_pub = self.create_publisher(
             Empty, "/behavior/start_driving", 1
         )
 
+        self.joint_state_pub = self.create_publisher(JointState, "/joint_states", 1)
+
         self.is_planting = False
         self.planting_stop_time = time.time()
-        self.create_timer(0.1, self.checkIfPlantingComplete)
 
         if self.sim_only:
             self.get_logger().info("Sim only mode enabled. Skipping xArm setup.")
             return
+
+        self.FULL_SPEED = 40
+        self.CAREFUL_SPEED = self.FULL_SPEED / 2
 
         self.arm = XArmAPI(ip)
 
@@ -180,166 +218,68 @@ class XarmControlNode(Node):
 
         self.max_angular_speed = 80
 
-        code, current_joint_angles = self.arm.get_servo_angle()
+        self.q = self.arm.angles
 
-        current_joint_angles = current_joint_angles[
-            :6
-        ]  # Ignore the last joint (gripper)
-
-        # self.arm.move_gohome(wait=True, speed=speed)
-        print(current_joint_angles)
-        print(self.arm.angles)
-        # self.goOverhead()
-
-        if np.allclose(current_joint_angles, HOME_Q, atol=0.1):
-            self.get_logger().info("Already at home")
-            self.fsm_state = PoseState.HOME
-
-        elif np.allclose(current_joint_angles, OVERHEAD_Q, atol=0.1):
-            self.get_logger().info("Starting at overhead")
-            self.fsm_state = PoseState.OVERHEAD
-            self.goHome(speed=self.max_angular_speed)
-
-        elif np.allclose(current_joint_angles, READY_Q, atol=0.1):
-            self.get_logger().info("Starting at ready")
-            self.fsm_state = PoseState.READY
-            self.goHome(speed=self.max_angular_speed)
-
-        else:
-            self.get_logger().error("Starting at unknown position")
-            self.fsm_state = PoseState.UNKNOWN
-            self.goHome(speed=self.max_angular_speed, force=True)
-
-        # self.goOverhead(speed=speed)
-        # self.goReady()
-
-    def checkIfPlantingComplete(self):
-        if self.is_planting and time.time() > self.planting_stop_time:
-            self.get_logger().info("Planting complete.")
-            self.is_planting = False
-            self.start_driving_pub.publish(Empty())
-
-        elif self.is_planting:
-            remaining_time = self.planting_stop_time - time.time()
-            self.get_logger().info(
-                f"Planting in progress. {remaining_time:.2f} seconds remaining"
-            )
-
-    def startPlantingCb(self, msg):
+    def start_planting_cb(self, msg):
         self.get_logger().info("Received start planting signal")
-        self.is_planting = True
-        self.planting_stop_time = time.time() + self.planting_time_secs
-        self.goReady()
-        self.goHome()
 
-    def setJointPosition(self, q: list[float], speed=25) -> int:
-        self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
+        self.open_gripper()
 
-    def goHome(self, speed=None, force=True):
-        if self.sim_only:
-            return
+        self.set_joints(q=pos_dictionary["home"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(q=pos_dictionary["ready"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(
+            q=pos_dictionary["seedling_1_pre"], speed=self.FULL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["seedling_1_grab"], speed=self.FULL_SPEED, wait=True
+        )
+        self.close_gripper()
+        self.set_joints(
+            q=pos_dictionary["seedling_1_lift"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(q=pos_dictionary["ready"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(q=pos_dictionary["to_hole_1"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(q=pos_dictionary["to_hole_2"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(
+            q=pos_dictionary["over_hole"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        time.sleep(5)
+        self.open_gripper()
 
-        if speed is None:
-            speed = self.max_angular_speed
+        self.publish_joint_state()
+        self.get_logger().info("Finished planting")
 
-        if self.fsm_state == PoseState.READY:
-            self.get_logger().info("Going to overhead from ready")
-            self.goOverhead(speed=speed)
+    def set_joints(self, q: list[float], speed=25) -> int:
+        return self.arm.set_servo_angle(angle=q, speed=speed, wait=True)
 
-        if self.fsm_state == PoseState.OVERHEAD:
-            self.get_logger().info("Going to home from overhead")
+    def open_gripper(self):
+        with serial.Serial("/dev/ttyACM0", 57600, timeout=1) as ser:
+            ser.write(b"O\r\n")
+            time.sleep(0.5)
 
-            self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
-            self.fsm_state = PoseState.HOME
+    def close_gripper(self):
+        with serial.Serial("/dev/ttyACM0", 57600, timeout=1) as ser:
+            ser.write(b"C\r\n")
+            time.sleep(0.5)
 
-        elif self.fsm_state == PoseState.HOME:
-            self.get_logger().info("Already at home")
-            return
+    def publish_joint_state(self):
 
-        elif force:
-            self.get_logger().warning("Going to home from unknown")
+        names = [
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+        ]
 
-            self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
-            self.fsm_state = PoseState.HOME
+        angles = self.arm.angles[:6]
 
-        else:
-            assert NotImplementedError(
-                "Cannot go home from state {}".format(self.fsm_state)
-            )
-
-    def goOverhead(self, speed=None):
-        if self.sim_only:
-            return
-
-        if speed is None:
-            speed = self.max_angular_speed
-
-        if self.fsm_state == PoseState.READY:
-            self.get_logger().info("Going to overhead from ready")
-            self.arm.set_servo_angle(angle=OVERHEAD_Q, speed=speed, wait=True)
-            self.get_logger().info("Now at overhead position")
-            self.fsm_state = PoseState.OVERHEAD
-            return
-
-        elif self.fsm_state == PoseState.HOME:
-            self.get_logger().info("Going to overhead from home")
-            self.arm.set_servo_angle(angle=OVERHEAD_Q, speed=speed, wait=True)
-            self.get_logger().info("Now at overhead position")
-            self.fsm_state = PoseState.OVERHEAD
-            return
-
-        else:
-            self.get_logger().error(f"Unsupported state {self.fsm_state}")
-            return
-
-    def goReady(self, speed=None):
-        if self.sim_only:
-            return
-
-        if speed is None:
-            speed = self.max_angular_speed
-
-        if self.fsm_state == PoseState.OVERHEAD:
-            self.get_logger().info("Going to ready from overhead")
-            self.arm.set_servo_angle(angle=READY_Q, speed=speed, wait=True)
-            self.get_logger().info("Now at ready position")
-            self.fsm_state = PoseState.READY
-            return
-
-        if self.fsm_state == PoseState.HOME:
-            self.get_logger().info("Going to overhead from home")
-            self.goOverhead(speed=speed)
-            self.goReady(speed=speed)
-            return
-
-        elif self.fsm_state == PoseState.READY:
-            self.get_logger().info("Already at ready")
-            return
-
-        else:
-            self.get_logger().error(f"Unsupported state {self.fsm_state}")
-            return
-
-    def handleCode(self, code: int):
-        """
-        Handle the API code returned by the xArm.
-        """
-
-        if code == 0:
-            return  # Everything is ok
-
-        elif code == 9:
-            self.get_logger().error(f"Code 9: xArm is not ready to move.")
-
-        code, [error_code, warn_code] = self.arm.get_err_warn_code()
-
-        if error_code in ERROR_CODE_MAP:
-            self.get_logger().error(
-                f"Could not move to home position: {ERROR_CODE_MAP[error_code]}"
-            )
-        else:
-            self.get_logger().error(f"Unknown error code {error_code} returned by xArm")
-            self.arm.get_err_warn_code(show=True)
+        msg = JointState()
+        msg.position = angles
+        msg.name = names
+        msg.header.stamp = self.get_clock().now().to_msg()
+        self.joint_state_pub.publish(msg)
 
 
 def main(args=None):

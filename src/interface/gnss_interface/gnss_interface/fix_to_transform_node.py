@@ -37,8 +37,9 @@ class FixToTransformNode(Node):
         self.create_subscription(Imu, "/imu", self.imuCb, 1)  # For orientation
 
         self.odom_pub = self.create_publisher(Odometry, "/gnss/odom", 1)
+        self.yaw_pub = self.create_publisher(Float32, "/yaw_float", 1)
 
-        self.create_subscription(GPSFix, "/gps/gpsfix", self.swiftFixCb, 1)
+        self.create_subscription(GPSFix, "/gnss/gpsfix", self.swiftFixCb, 1)
 
         # Broadcast a map -> base_link transform
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -108,7 +109,8 @@ class FixToTransformNode(Node):
         t = TransformStamped()
         t.transform.translation.x = ego_x
         t.transform.translation.y = ego_y
-        t.transform.translation.z = swift_msg.altitude
+        # t.transform.translation.z = swift_msg.altitude
+        t.transform.translation.z = 0.0
         t.transform.rotation = odom_msg.pose.pose.orientation
         t.header = odom_msg.header
         t.child_frame_id = odom_msg.child_frame_id
@@ -116,15 +118,17 @@ class FixToTransformNode(Node):
 
         self.odom_pub.publish(odom_msg)
         # self.yaw_pub.publish(Float32(data=yaw))
-        
+
         self.get_logger().info(
             f"Published Odom: x={ego_x:.12f}, y={ego_x:.12f}, yaw={yaw:.2f}°"
         )
 
+        self.get_logger().info(f"Got lat/lon: {ego_x}, {ego_y}, yaw: {yaw}")
+
     def fixCb(self, msg: NavSatFix):
         # Convert to UTM
         utm_x, utm_y, _, __ = utm.from_latlon(msg.latitude, msg.longitude)
-    
+
         # Calculate the position relative to the map origin
         x = utm_x - self.origin_utm_x
         y = utm_y - self.origin_utm_y
@@ -163,6 +167,27 @@ class FixToTransformNode(Node):
         odom.pose.pose.position.z = msg.altitude - self.origin_z
         odom.pose.pose.orientation = t.transform.rotation
         self.odom_pub.publish(odom)
+
+    def trueTrackToEnuRads(self, track_deg: float):
+        enu_yaw = track_deg
+
+        enu_yaw -= 90
+
+        enu_yaw = 360 - enu_yaw
+
+        if enu_yaw < 0:
+            enu_yaw += 360
+        elif enu_yaw > 360:
+            enu_yaw -= 360
+
+        enu_yaw *= math.pi / 180.0
+
+        if enu_yaw > np.pi:
+            enu_yaw -= np.pi * 2
+
+        elif enu_yaw < -np.pi:
+            enu_yaw += np.pi * 2
+        return enu_yaw
 
     # def gps_callback(self, msg: GPSFix):
     #     """Callback for SwiftnavROS2 to get GPSFix and convert it to odometry message

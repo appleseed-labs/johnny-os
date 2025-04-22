@@ -294,7 +294,7 @@ class MotionController(Node):
                 min_dist = distance
                 # self.get_logger().info(f"Distance: {distance}\n")
                 # self.get_logger().info(f"Formula: {max(0.1, min(2.0, distance))}\n")
-                best_lookahead = max(0.8, distance)  # Adjust dynamically
+                best_lookahead = max(1.0, distance)  # Adjust dynamically
 
         self.get_logger().info(f"Adaptive lookahead distance: {best_lookahead}")
         return best_lookahead
@@ -354,7 +354,7 @@ class MotionController(Node):
 
         # Stop if close to goal
         # TODO: Parameterize this distance threshold
-        if remaining_distance < 0.25:
+        if remaining_distance < 0.3:
             self.get_logger().info("We are close to the waypoint!")
             # Stop the robot
             self.stop()
@@ -374,7 +374,7 @@ class MotionController(Node):
             self.lookahead_not_found_counter += 1
 
             # FAILSAFE: If we have seen the no valid lookahead point then lets stop
-            if self.lookahead_not_found_counter == 250:
+            if self.lookahead_not_found_counter == 150:
                 # Stop the robot
                 self.stop()
                 self.lookahead_not_found_counter = 0

@@ -15,8 +15,57 @@ import math
 from threading import Lock
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from scipy.spatial.transform import Rotation as R
-import pytorch_kinematics as pk
-import torch
+
+pos_dictionary = {
+    "home": [
+        -0.32572651,
+        -80.93894022,
+        -14.3142046,
+        -188.32544039,
+        -7.37580029,
+        -170.15998538,
+        0.0,
+    ],
+    "ready": [
+        130.09470834,
+        33.48371084,
+        -139.9335396,
+        -68.80289198,
+        129.62064306,
+        -175.63041452,
+        0.0,
+    ],
+    "seedling_1_pre": [
+        117.616547,
+        -12.89321197,
+        -55.8271168,
+        -53.73828456,
+        99.10324932,
+        -147.33598243,
+        0.0,
+    ],
+    "seedling_1_grab": [
+        116.8671755,
+        -9.62150837,
+        -51.20936345,
+        -53.80446119,
+        96.2770204,
+        -138.36598437,
+        0.0,
+    ],
+    "seedling_1_lift": [
+        138.18154925,
+        11.32691724,
+        -77.62907763,
+        -43.34248103,
+        115.49729071,
+        -129.13036308,
+        0.0,
+    ],
+    "over_hole": [-29.1542, 16.5677, -28.8071, -176.041, 62.1542, -158.9843, 0.0],
+    "to_hole_1": [73.9455, -4.1437, -91.7979, -64.7164, 76.854, -187.4988, 0.0],
+    "to_hole_2": [7.449, -51.7186, -27.6111, -84.6549, 8.9232, -187.504, 0.0],
+}
 
 
 class ArmTrajectoryPlanner(Node):
@@ -33,23 +82,6 @@ class ArmTrajectoryPlanner(Node):
         # Robot description (URDF)
         self.robot_description = None
         self.robot_model = None
-
-        # Joint limits
-        self.joint_limits = None
-
-        self.num_joints = 6
-
-        # Hard-coded velocity and acceleration limits
-        # These will be properly assigned to joint names from URDF later
-        self.joint_velocity_limits = {}  # rad/s
-        self.joint_acceleration_limits = {}  # rad/s^2
-
-        # Obstacles as 3D bounding boxes [x_min, y_min, z_min, x_max, y_max, z_max]
-        self.obstacles = [
-            [0.5, 0.5, 0.0, 0.7, 0.7, 0.5],  # Obstacle 1
-            [0.5, -0.5, 0.0, 0.7, -0.3, 0.5],  # Obstacle 2
-            [-0.5, 0.5, 0.0, -0.3, 0.7, 0.5],  # Obstacle 3
-        ]
 
         # Subscribers
         self.joint_state_sub = self.create_subscription(
@@ -75,26 +107,10 @@ class ArmTrajectoryPlanner(Node):
             callback_group=self.callback_group,
         )
 
-        # Subscriber for target pose
-        self.target_pose_sub = self.create_subscription(
-            Pose,
-            "/target_pose",
-            self.target_pose_callback,
-            10,
-            callback_group=self.callback_group,
-        )
-
         # Publisher for joint commands
         self.joint_command_pub = self.create_publisher(JointState, "/joint_command", 10)
-        self.test_pose_pub = self.create_publisher(Pose, "/target_pose", 10)
-
-        self.test_pose_sent = False
-
-        self.chain = None
 
         self.get_logger().info("Arm Trajectory Planner initialized")
-
-        self.target_pose_test_timer = self.create_timer(3.0, self.send_test_pose)
 
     def joint_state_callback(self, msg):
         with self.joint_state_lock:
@@ -115,31 +131,7 @@ class ArmTrajectoryPlanner(Node):
         self.test_pose_pub.publish(test_pose)
 
     def robot_description_callback(self, msg):
-        self.robot_description = msg.data
-        self.parse_robot_description()
-        self.get_logger().info("Received robot description")
-
-        # Create a chain for pytorch_kinematics
-        chain = pk.build_chain_from_urdf(msg.data)
-        self.chain = pk.SerialChain(chain, "link_eef", "arm_link")
-        self.chain.print_tree()
-
-        # Now we'll publish a test pose
-        self.send_test_pose()
-
-    def target_pose_callback(self, msg):
-        self.get_logger().info(f"Received target pose: {msg.position}")
-        # Check if we have the necessary data
-        if self.current_joint_state is None:
-            self.get_logger().error("No joint state received yet")
-            return
-
-        if self.robot_model is None:
-            self.get_logger().error("No robot description received yet")
-            return
-
-        # Plan and execute trajectory
-        self.plan_and_execute_trajectory(msg)
+        pass
 
     def parse_robot_description(self):
         if self.robot_description is None:

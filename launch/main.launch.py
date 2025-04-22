@@ -27,6 +27,8 @@ def generate_launch_description():
         launch_arguments={}.items(),
     )
 
+    use_sim_time = LaunchConfiguration("use_sim_time", default=False)
+
     # Connects ROS to EcoSim
     unity_endpoint = Node(
         package="ros_tcp_endpoint", executable="default_server_endpoint"
@@ -95,6 +97,45 @@ def generate_launch_description():
         executable="joy_node",
     )
 
+    joystick_interface = Node(
+        package="joystick_interface",
+        executable="joystick_interface",
+    )
+
+    velodyne_driver_node = Node(
+        package="velodyne_driver",
+        executable="velodyne_driver_node",
+        output="screen",
+        parameters=[
+            {"frame_id": "lidar_link"},
+            {"device_ip": "192.168.1.201"},  # Replace with your Velodyne's IP address
+            {"port": 2368},  # Default port for Velodyne
+        ],
+    )
+
+    velodyne_cloud_node = Node(
+        package="velodyne_pointcloud",
+        executable="velodyne_transform_node",
+        parameters=[
+            {
+                "calibration": os.path.join(
+                    get_package_share_directory("velodyne_pointcloud"),
+                    "params",
+                    "VLP16db.yaml",
+                )
+            },
+            {"fixed_frame": "lidar_link"},
+            {"target_frame": "base_link"},
+            {"use_sim_time": use_sim_time},
+            {"model": "VLP16"},
+        ],
+    )
+
+    lidar_filter = Node(
+        package="sensor_processing",
+        executable="lidar_filter",
+    )
+
     return LaunchDescription(
         [
             # INFRASTRUCTURE
@@ -104,8 +145,12 @@ def generate_launch_description():
             # rosbridge_server,
             # unity_endpoint,
             joy_node,
+            joystick_interface,
             swiftnav_interface,
+            velodyne_driver_node,
+            velodyne_cloud_node,
             # PERCEPTION
+            lidar_filter,
             # PLANNING
             fix_to_transform_node,
             # motion_controller,

@@ -119,11 +119,11 @@ class FixToTransformNode(Node):
         self.odom_pub.publish(odom_msg)
         # self.yaw_pub.publish(Float32(data=yaw))
 
-        self.get_logger().info(
-            f"Published Odom: x={ego_x:.12f}, y={ego_x:.12f}, yaw={yaw:.2f}°"
-        )
+        # self.get_logger().info(
+        #     f"Published Odom: x={ego_x:.12f}, y={ego_x:.12f}, yaw={yaw:.2f}°"
+        # )
 
-        self.get_logger().info(f"Got lat/lon: {ego_x}, {ego_y}, yaw: {yaw}")
+        # self.get_logger().info(f"Got lat/lon: {ego_x}, {ego_y}, yaw: {yaw}")
 
     def fixCb(self, msg: NavSatFix):
         # Convert to UTM

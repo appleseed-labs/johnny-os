@@ -246,11 +246,13 @@ class XarmControlNode(Node):
         time.sleep(5)
         self.open_gripper()
 
+        self.set_joints(q=pos_dictionary["home"], speed=self.FULL_SPEED, wait=True)
+
         self.publish_joint_state()
         self.get_logger().info("Finished planting")
 
-    def set_joints(self, q: list[float], speed=25) -> int:
-        return self.arm.set_servo_angle(angle=q, speed=speed, wait=True)
+    def set_joints(self, q: list[float], speed=25, wait=True) -> int:
+        return self.arm.set_servo_angle(angle=q, speed=speed, wait=wait)
 
     def open_gripper(self):
         with serial.Serial("/dev/ttyACM0", 57600, timeout=1) as ser:

@@ -71,6 +71,44 @@ pos_dictionary = {
     "over_hole": [-29.1542, 16.5677, -28.8071, -176.041, 62.1542, -158.9843, 0.0],
     "to_hole_1": [73.9455, -4.1437, -91.7979, -64.7164, 76.854, -187.4988, 0.0],
     "to_hole_2": [7.449, -51.7186, -27.6111, -84.6549, 8.9232, -187.504, 0.0],
+    "sweep_1_start": [
+        -47.4052,
+        40.4668,
+        -111.8521,
+        -149.4101,
+        -51.2849,
+        -158.9844,
+        0.0,
+    ],
+    "sweep_1_end": [-46.9914, 67.4331, -120.2814, -153.5416, -47.5788, -158.9937, 0.0],
+    "sweep_2_start": [
+        -21.4479,
+        30.1746,
+        -52.0257,
+        -153.4955,
+        47.0232,
+        -158.9836,
+        0.0,
+    ],
+    "sweep_2_end": [
+        -32.4677,
+        48.2822,
+        -67.9598,
+        -148.6514,
+        51.1192,
+        -170.1973,
+        0.0,
+    ],
+    "sweep_3_start": [
+        -49.7081,
+        102.6205,
+        -123.6335,
+        -223.697,
+        111.2129,
+        -247.0071,
+        0.0,
+    ],
+    "sweep_3_end": [-49.4795, 80.2942, -97.1986, -219.7065, 127.7964, -246.9978, 0.0],
 }
 
 ip = "192.168.1.196"
@@ -99,23 +137,42 @@ def close_gripper():
 FULL_SPEED = 40
 CAREFUL_SPEED = FULL_SPEED / 2
 
-open_gripper()
+# open_gripper()
 arm.set_servo_angle(angle=pos_dictionary["home"], speed=FULL_SPEED, wait=True)
-arm.set_servo_angle(angle=pos_dictionary["ready"], speed=FULL_SPEED, wait=True)
-arm.set_servo_angle(angle=pos_dictionary["seedling_1_pre"], speed=FULL_SPEED, wait=True)
-arm.set_servo_angle(
-    angle=pos_dictionary["seedling_1_grab"], speed=FULL_SPEED, wait=True
-)
-close_gripper()
-arm.set_servo_angle(
-    angle=pos_dictionary["seedling_1_lift"], speed=CAREFUL_SPEED, wait=True
-)
-arm.set_servo_angle(angle=pos_dictionary["ready"], speed=FULL_SPEED, wait=True)
-arm.set_servo_angle(angle=pos_dictionary["to_hole_1"], speed=FULL_SPEED, wait=True)
-arm.set_servo_angle(angle=pos_dictionary["to_hole_2"], speed=FULL_SPEED, wait=True)
+exit()
+# arm.set_servo_angle(angle=pos_dictionary["ready"], speed=FULL_SPEED, wait=True)
+# arm.set_servo_angle(angle=pos_dictionary["seedling_1_pre"], speed=FULL_SPEED, wait=True)
+# arm.set_servo_angle(
+#     angle=pos_dictionary["seedling_1_grab"], speed=FULL_SPEED, wait=True
+# )
+# close_gripper()
+# arm.set_servo_angle(
+#     angle=pos_dictionary["seedling_1_lift"], speed=CAREFUL_SPEED, wait=True
+# )
+# arm.set_servo_angle(angle=pos_dictionary["ready"], speed=FULL_SPEED, wait=True)
+# arm.set_servo_angle(angle=pos_dictionary["to_hole_1"], speed=FULL_SPEED, wait=True)
+# arm.set_servo_angle(angle=pos_dictionary["to_hole_2"], speed=FULL_SPEED, wait=True)
+
 arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
-time.sleep(5)
-open_gripper()
+arm.set_servo_angle(
+    angle=pos_dictionary["sweep_1_start"], speed=CAREFUL_SPEED, wait=True
+)
+arm.set_servo_angle(angle=pos_dictionary["sweep_1_end"], speed=CAREFUL_SPEED, wait=True)
+arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
+arm.set_servo_angle(
+    angle=pos_dictionary["sweep_2_start"], speed=CAREFUL_SPEED, wait=True
+)
+arm.set_servo_angle(angle=pos_dictionary["sweep_2_end"], speed=CAREFUL_SPEED, wait=True)
+arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
+arm.set_servo_angle(
+    angle=pos_dictionary["sweep_3_start"], speed=CAREFUL_SPEED, wait=True
+)
+arm.set_servo_angle(angle=pos_dictionary["sweep_3_end"], speed=CAREFUL_SPEED, wait=True)
+arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
+
+
+# time.sleep(5)
+# open_gripper()
 
 # close_gripper()
 # arm.set_servo_angle(angle=pos_dictionary["home"], speed=10, wait=True)
@@ -127,7 +184,3 @@ while True:
     if np.linalg.norm(new_angles - angles) > 0.01:
         print(f"{[float(round(angle, 4)) for angle in new_angles]}")
         angles = new_angles
-
-
-# arm.move_gohome(wait=True)
-arm.disconnect()

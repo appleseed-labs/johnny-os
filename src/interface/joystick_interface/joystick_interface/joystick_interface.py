@@ -13,6 +13,7 @@ from rclpy.node import Node, ParameterDescriptor, ParameterType
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Empty
+from time import time
 
 
 class JoystickInterfaceNode(Node):
@@ -28,20 +29,47 @@ class JoystickInterfaceNode(Node):
         # Published by "joy_node" ("joy" package)
         self.create_subscription(Joy, "/joy", self.joy_cb, 1)
 
-        # Published by "xarm_control" ("xarm_control" package)
+        # Subscribed to by "xarm_control" ("xarm_control" package)
         self.start_planting_pub = self.create_publisher(
             Empty, "/behavior/start_planting", 1
+        )
+
+        # Subscribed to by "linak_control" ("linak_control" package)
+        self.start_drilling_pub = self.create_publisher(
+            Empty, "/behavior/start_drilling", 1
         )
 
         # For sending movement commands
         self.twist_pub = self.create_publisher(Twist, "/cmd_vel", 1)
 
+        self.time_since_sending_plant = 0.0
+        self.time_since_sending_plant_threshold = 3.0  # seconds
+        self.time_since_sending_drill = 0.0
+        self.time_since_sending_drill_threshold = 3.0  # seconds
+
     def joy_cb(self, msg):
 
         if msg.buttons[0] == 1:
+            if (
+                time() - self.time_since_sending_plant
+                < self.time_since_sending_plant_threshold
+            ):
+                return
             # Start planting
             self.get_logger().info("Start planting")
             self.start_planting_pub.publish(Empty())
+            self.time_since_sending_plant = time()
+
+        if msg.buttons[1] == 1:
+            if (
+                time() - self.time_since_sending_drill
+                < self.time_since_sending_drill_threshold
+            ):
+                return
+            # Start drilling
+            self.get_logger().info("Start drilling")
+            self.start_drilling_pub.publish(Empty())
+            self.time_since_sending_drill = time()
 
         # Convert joystick input to movement commands
         # Right stick controls forward/backward and left/right

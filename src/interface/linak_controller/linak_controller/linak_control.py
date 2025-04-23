@@ -29,8 +29,13 @@ class actuation_subscriber(Node):
     def __init__(self, canbus):
         super().__init__("linak_actuator_node")
         self.subscription = self.create_subscription(
-            Empty, "/behavior/start_drilling", self.start_drilling_cb, 10
+            Empty, "/behavior/start_drilling", self.start_drilling_cb, 1
         )
+
+        self.on_drill_complete_pub = self.create_publisher(
+            Empty, "/behavior/on_drill_complete", 1
+        )
+
         self.canbus = canbus
 
     def increment_linak_position(self, initial, final, duration, n_steps):
@@ -54,15 +59,17 @@ class actuation_subscriber(Node):
         self.get_logger().info("Drilling now...")
         self.canbus.send_actuator_command(1800)
         self.start_auger()
-        time.sleep(15)
+        time.sleep(12)
         self.increment_linak_position(initial=1800, final=2400, duration=15, n_steps=50)
 
         self.canbus.send_actuator_command(64258)  # === RUN IN ===
-        time.sleep(15)
+        time.sleep(12)
         # print("Final STOP...")
         self.canbus.send_actuator_command(64259)  # === STOP ===
         self.stop_auger()
         time.sleep(0.5)
+
+        self.on_drill_complete_pub.publish(Empty())
 
     def start_auger(self):
         with serial.Serial("/dev/ttyACM1", 9600, timeout=1) as ser:

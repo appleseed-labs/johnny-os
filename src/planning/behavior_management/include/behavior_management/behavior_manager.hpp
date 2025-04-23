@@ -39,6 +39,11 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr on_plant_complete_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr on_user_pause_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr on_error_sub_;
+
+  // Publisher handles
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr start_drilling_pub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr start_planting_pub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr start_driving_pub_;
 };
 
 }  // namespace behavior_management

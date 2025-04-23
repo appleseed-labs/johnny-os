@@ -28,9 +28,10 @@ import numpy as np
 
 # from matplotlib import pyplot as plt
 
-from geometry_msgs.msg import Point
-from time import sleep
+from geometry_msgs.msg import Point, Twist
+from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool, Empty
+from time import sleep
 
 from xarm.wrapper import XArmAPI
 import serial
@@ -186,16 +187,6 @@ class XarmControlNode(Node):
             self.get_parameter("planting_time_secs").get_parameter_value().double_value
         )
 
-        self.create_subscription(
-            Empty, "/behavior/start_planting", self.start_planting_cb, 1
-        )
-
-        self.start_driving_pub = self.create_publisher(
-            Empty, "/behavior/start_driving", 1
-        )
-
-        self.joint_state_pub = self.create_publisher(JointState, "/joint_states", 1)
-
         self.is_planting = False
         self.planting_stop_time = time.time()
 
@@ -220,8 +211,56 @@ class XarmControlNode(Node):
 
         self.q = self.arm.angles
 
+        self.rolling_back_started = False
+        self.total_distance_so_far = 0.0
+        self.target_roll_distance = -0.15  # meters
+
+        # SUBSCRIPTIONS
+        self.create_subscription(
+            Empty, "/behavior/start_planting", self.start_planting_cb, 1
+        )
+        # From the Amiga control node
+        self.create_subscription(Odometry, "/odom", self.odometry_cb, 1)
+
+        # PUBLISHERS
+        self.on_plant_complete_pub = self.create_publisher(
+            Empty, "/behavior/on_plant_complete", 1
+        )
+        self.twist_pub = self.create_publisher(Twist, "/cmd_vel", 1)
+        self.joint_state_pub = self.create_publisher(JointState, "/joint_states", 1)
+
+    def odometry_cb(self, msg):
+        # Integrate the angular.z component of the twist
+        # to get the total rotation in radians
+
+        if not self.rolling_back_started:
+            self.total_distance_so_far = 0.0
+            return
+
+        ODOMETRY_HZ = 19.0
+        dt = 1.0 / ODOMETRY_HZ
+
+        self.total_distance_so_far += msg.twist.twist.linear.x * dt
+
+        print(self.total_distance_so_far)
+
+        twist = Twist()
+        twist.linear.x = -0.25  # m/s
+
+        self.twist_pub.publish(twist)
+
+        if self.total_distance_so_far < self.target_roll_distance:
+            print("DONE TURNING")
+            self.rolling_back_started = False
+            self.total_distance_so_far = 0.0
+            self.pick_and_place_seedling()
+
     def start_planting_cb(self, msg):
         self.get_logger().info("Received start planting signal")
+
+        self.rolling_back_started = True
+
+    def pick_and_place_seedling(self):
 
         self.open_gripper()
 
@@ -250,6 +289,7 @@ class XarmControlNode(Node):
 
         self.publish_joint_state()
         self.get_logger().info("Finished planting")
+        self.on_plant_complete_pub.publish(Empty())
 
     def set_joints(self, q: list[float], speed=25, wait=True) -> int:
         return self.arm.set_servo_angle(angle=q, speed=speed, wait=wait)

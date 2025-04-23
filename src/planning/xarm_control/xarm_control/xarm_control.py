@@ -255,12 +255,12 @@ class XarmControlNode(Node):
         return self.arm.set_servo_angle(angle=q, speed=speed, wait=wait)
 
     def open_gripper(self):
-        with serial.Serial("/dev/ttyACM0", 57600, timeout=1) as ser:
+        with serial.Serial("/dev/ttyACM1", 57600, timeout=1) as ser:
             ser.write(b"O\r\n")
             time.sleep(0.5)
 
     def close_gripper(self):
-        with serial.Serial("/dev/ttyACM0", 57600, timeout=1) as ser:
+        with serial.Serial("/dev/ttyACM1", 57600, timeout=1) as ser:
             ser.write(b"C\r\n")
             time.sleep(0.5)
 

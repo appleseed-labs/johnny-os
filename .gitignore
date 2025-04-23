@@ -5,3 +5,4 @@ log/
 *.pyc
 rosbag*
 __pycache__
+src/perception/yolov8_detecter/test

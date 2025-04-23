@@ -73,7 +73,7 @@ class JoystickInterfaceNode(Node):
 
         # Convert joystick input to movement commands
         # Right stick controls forward/backward and left/right
-        forward = msg.axes[3]
+        forward = msg.axes[3] * 0.7
         left_right = msg.axes[2]
         twist = Twist()
         twist.linear.x = forward

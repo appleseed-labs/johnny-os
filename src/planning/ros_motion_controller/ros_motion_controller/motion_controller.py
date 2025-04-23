@@ -5,6 +5,7 @@
 # -----------------------------------------------------------------------------
 
 from sympy import N
+import xdg
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PoseStamped
@@ -75,6 +76,8 @@ class MotionController(Node):
         if self.counter_for_person > 50:
             self.get_logger().info(f"Going to sleep, a person is detected")
             time.sleep(10)
+            self.counter_for_person = 0
+            self.get_logger().info("Done with detecting person")
 
     def transformPose(self, pose_msg: PoseStamped, target_frame: str):
         """Transform a PoseStamped message to a target frame

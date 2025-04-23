@@ -39,20 +39,26 @@ class JoystickInterfaceNode(Node):
             Empty, "/behavior/start_drilling", 1
         )
 
+        # Subscribed to by the Behavior Manager
+        self.on_arrived_pub = self.create_publisher(Empty, "/behavior/on_arrived", 1)
+
         # For sending movement commands
         self.twist_pub = self.create_publisher(Twist, "/cmd_vel", 1)
 
         self.time_since_sending_plant = 0.0
-        self.time_since_sending_plant_threshold = 3.0  # seconds
+        self.time_since_sending_plant_cooloff = 3.0  # seconds
         self.time_since_sending_drill = 0.0
-        self.time_since_sending_drill_threshold = 3.0  # seconds
+        self.time_since_sending_drill_cooloff = 3.0  # seconds
+
+        self.time_since_sending_on_arrived = 0.0
+        self.time_since_sending_on_arrived_cooloff = 3.0  # seconds
 
     def joy_cb(self, msg):
 
-        if msg.buttons[0] == 1:
+        if msg.buttons[0] == 1:  # "A" button
             if (
                 time() - self.time_since_sending_plant
-                < self.time_since_sending_plant_threshold
+                < self.time_since_sending_plant_cooloff
             ):
                 return
             # Start planting
@@ -60,16 +66,27 @@ class JoystickInterfaceNode(Node):
             self.start_planting_pub.publish(Empty())
             self.time_since_sending_plant = time()
 
-        if msg.buttons[1] == 1:
+        if msg.buttons[1] == 1:  # "B" button
             if (
                 time() - self.time_since_sending_drill
-                < self.time_since_sending_drill_threshold
+                < self.time_since_sending_drill_cooloff
             ):
                 return
             # Start drilling
             self.get_logger().info("Start drilling")
             self.start_drilling_pub.publish(Empty())
             self.time_since_sending_drill = time()
+
+        if msg.buttons[3] == 1:  # "X" button
+            if (
+                time() - self.time_since_sending_on_arrived
+                < self.time_since_sending_on_arrived_cooloff
+            ):
+                return
+            # On arrived
+            self.get_logger().info("On arrived")
+            self.on_arrived_pub.publish(Empty())
+            self.time_since_sending_on_arrived = time()
 
         # Convert joystick input to movement commands
         # Right stick controls forward/backward and left/right

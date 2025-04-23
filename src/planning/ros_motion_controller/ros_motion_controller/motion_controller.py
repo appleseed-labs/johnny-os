@@ -33,6 +33,9 @@ class MotionController(Node):
         # Subscribers
         self.create_subscription(Path, "/planning/path", self.pathCb, 10)
         self.create_subscription(Float32, "/yaw_float", self.yawFloat, 10)
+        self.create_subscription(
+            Bool, "/perception/person_nearby", self.personDetected, 10
+        )
 
         # For looking up the robot's position on the map
         self.tf_buffer = Buffer()
@@ -55,8 +58,23 @@ class MotionController(Node):
 
         # Counter to help us track the amount of lookahead_points not found
         self.lookahead_not_found_counter = 0
+        # Counter for person detection
+        self.counter_for_person = 0
         # Initilize timer for control loop
         self.timer = self.create_timer(0.1, self.spinController)
+
+    def personDetected(self, msg):
+        """
+        See if we detected a person
+        """
+        if msg.data:
+            self.counter_for_person += 1
+        else:
+            self.counter_for_person = 0
+
+        if self.counter_for_person > 50:
+            self.get_logger().info(f"Going to sleep, a person is detected")
+            time.sleep(10)
 
     def transformPose(self, pose_msg: PoseStamped, target_frame: str):
         """Transform a PoseStamped message to a target frame
@@ -213,7 +231,7 @@ class MotionController(Node):
         twist_msg.linear.x = 1.0
         twist_msg.angular.z = 0.0
         self.twist_publisher.publish(twist_msg)
-        self.get_logger().info("HEre iun the code")
+        self.get_logger().info("Going to move forward to reset yaw")
         time.sleep(2)
         # Stop the robot
         twist_msg.linear.x = 0.0
@@ -329,7 +347,7 @@ class MotionController(Node):
             # self.get_logger().info(
             #     f"In map coordinates at: ({self.map_x}, {self.map_y})"
             # )
-            self.get_logger().info(f"Yaw: {self.ego_yaw}")
+            # self.get_logger().info(f"Yaw: {self.ego_yaw}")
         except TransformException as ex:
             self.get_logger().warning(
                 f"Could not find ego transform. Skipping control loop: {ex}"
@@ -343,10 +361,10 @@ class MotionController(Node):
         )
 
         # self.get_logger().info(f"Our endpoiunt: {self.waypoints[-1][0]}, {self.waypoints[-1][1]}")
-
+        self.get_logger().info(f"Got dist: {remaining_distance}")
         # Stop if close to goal
         # TODO: Parameterize this distance threshold
-        if remaining_distance < 0.3:
+        if float(remaining_distance) < 0.5:
             self.get_logger().info("We are close to the waypoint!")
             # Stop the robot
             self.stop()
@@ -366,11 +384,14 @@ class MotionController(Node):
             self.lookahead_not_found_counter += 1
 
             # FAILSAFE: If we have seen the no valid lookahead point then lets stop
-            if self.lookahead_not_found_counter == 150:
+            if self.lookahead_not_found_counter == 15:
                 # Stop the robot
                 self.stop()
                 self.lookahead_not_found_counter = 0
             return
+
+        # Reset the lookahead_counter to check for consecutive
+        self.lookahead_not_found_counter = 0
 
         # Compute angular and linear speed
         angular_speed, linear_speed = self.findAngLinSpeeds(

@@ -608,7 +608,7 @@ class WayPointController(Node):
             self.get_logger().warning(f"Could not transform pose: {ex}")
             return None
 
-    def forward_random_path(start, end, steps=10, noise_scale=0.5):
+    def forward_random_path(start, end, steps=10, noise_scale=0.1):
         """A helper function to generate random path from the start to end with random side deviations"""
         start = np.array(start, dtype=float)
         end = np.array(end, dtype=float)

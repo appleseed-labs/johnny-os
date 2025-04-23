@@ -145,7 +145,7 @@ def generate_launch_description():
             # rosbridge_server,
             # unity_endpoint,
             joy_node,
-            # joystick_interface,
+            joystick_interface,
             swiftnav_interface,
             velodyne_driver_node,
             velodyne_cloud_node,

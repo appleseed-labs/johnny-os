@@ -137,9 +137,7 @@ def close_gripper():
 FULL_SPEED = 40
 CAREFUL_SPEED = FULL_SPEED / 2
 
-# open_gripper()
-arm.set_servo_angle(angle=pos_dictionary["home"], speed=FULL_SPEED, wait=True)
-exit()
+
 # arm.set_servo_angle(angle=pos_dictionary["ready"], speed=FULL_SPEED, wait=True)
 # arm.set_servo_angle(angle=pos_dictionary["seedling_1_pre"], speed=FULL_SPEED, wait=True)
 # arm.set_servo_angle(
@@ -153,22 +151,22 @@ exit()
 # arm.set_servo_angle(angle=pos_dictionary["to_hole_1"], speed=FULL_SPEED, wait=True)
 # arm.set_servo_angle(angle=pos_dictionary["to_hole_2"], speed=FULL_SPEED, wait=True)
 
-arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
-arm.set_servo_angle(
-    angle=pos_dictionary["sweep_1_start"], speed=CAREFUL_SPEED, wait=True
-)
-arm.set_servo_angle(angle=pos_dictionary["sweep_1_end"], speed=CAREFUL_SPEED, wait=True)
-arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
-arm.set_servo_angle(
-    angle=pos_dictionary["sweep_2_start"], speed=CAREFUL_SPEED, wait=True
-)
-arm.set_servo_angle(angle=pos_dictionary["sweep_2_end"], speed=CAREFUL_SPEED, wait=True)
-arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
-arm.set_servo_angle(
-    angle=pos_dictionary["sweep_3_start"], speed=CAREFUL_SPEED, wait=True
-)
-arm.set_servo_angle(angle=pos_dictionary["sweep_3_end"], speed=CAREFUL_SPEED, wait=True)
-arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
+# arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
+# arm.set_servo_angle(
+#     angle=pos_dictionary["sweep_1_start"], speed=CAREFUL_SPEED, wait=True
+# )
+# arm.set_servo_angle(angle=pos_dictionary["sweep_1_end"], speed=CAREFUL_SPEED, wait=True)
+# arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
+# arm.set_servo_angle(
+#     angle=pos_dictionary["sweep_2_start"], speed=CAREFUL_SPEED, wait=True
+# )
+# arm.set_servo_angle(angle=pos_dictionary["sweep_2_end"], speed=CAREFUL_SPEED, wait=True)
+# arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
+# arm.set_servo_angle(
+#     angle=pos_dictionary["sweep_3_start"], speed=CAREFUL_SPEED, wait=True
+# )
+# arm.set_servo_angle(angle=pos_dictionary["sweep_3_end"], speed=CAREFUL_SPEED, wait=True)
+# arm.set_servo_angle(angle=pos_dictionary["over_hole"], speed=CAREFUL_SPEED, wait=True)
 
 
 # time.sleep(5)

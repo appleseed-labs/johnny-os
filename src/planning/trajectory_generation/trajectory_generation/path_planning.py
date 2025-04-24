@@ -7,8 +7,11 @@ from nav_msgs.msg import OccupancyGrid
 from nav_msgs.msg import Path
 from geometry_msgs.msg import Pose
 from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Bool
 import cv2 # only for dialation
-
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+from tf2_ros.transform_listener import TransformListener
+from tf2_ros.buffer import Buffer
 
 # This node should subscribe to the occupancy grid data from the obstacle detector
 # plan the path using A* algorithm
@@ -17,7 +20,7 @@ import cv2 # only for dialation
 
 class pathPlanner(Node):
     # publish rate
-    RATE = 100
+    # RATE = 100
     
     occupancy_grid = None
     grid = None
@@ -46,13 +49,32 @@ class pathPlanner(Node):
             1
         )
 
+        self.mc_subscription = self.create_subscription(
+            Bool, "/controller_signal", self.mc_callback, 10
+        )        
+
+        qos_profile = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1)
         # publish trajectory to "planning/traj"
-        self.traj_publisher = self.create_publisher(Path, "planning/traj", 1)
+        self.traj_publisher = self.create_publisher(Path, "planning/traj", qos_profile)
 
         # ROS2 timer for stepping
-        self.timer = self.create_timer(1.0 / self.RATE, self.step)
+        # self.timer = self.create_timer(1.0 / self.RATE, self.step)
 
         self.get_logger().info('INITIALIZED.')
+        
+
+        # For looking up the robot's position on the map
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+    def mc_callback(self, msg):
+        """Callback to check if the motion controller is ready for waypoints"""
+        # self.mc_bool = msg.data
+        self.get_logger().info("We trying to send the waypoints")
+        path_msg = self.generate_traj()
+        if(path_msg != None):
+            self.get_logger().info('PUBLISHING.')
+            self.traj_publisher.publish(path_msg)             
         
     def process_occupancy_grid(self, msg:OccupancyGrid):
         self.occupancy_grid = msg
@@ -67,6 +89,10 @@ class pathPlanner(Node):
         self.grid = self.dilate_grid(self.grid, 1)
         
     def process_goal_pose(self, msg:Pose):
+        # t = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
+        # self.ego_x = t.transform.translation.x
+        # self.ego_y = t.transform.translation.y
+
         self.goal_x = int(msg.position.x)
         self.goal_y = int(msg.position.y)
     
@@ -197,7 +223,7 @@ class pathPlanner(Node):
         # translate path into path message
         path_msg = Path()
         path_msg.header.stamp = self.get_clock().now().to_msg()
-        path_msg.header.frame_id = "robot_center_frame"
+        path_msg.header.frame_id = "map"
         
         for (x, y) in self.smooth_path:
             pose = PoseStamped()
@@ -210,12 +236,6 @@ class pathPlanner(Node):
             path_msg.poses.append(pose)
 
         return path_msg
-
-    def step(self):
-        path_msg = self.generate_traj()
-        if(path_msg != None):
-            self.get_logger().info('PUBLISHING.')
-            self.traj_publisher.publish(path_msg)
 
 def main(args=None):
     rclpy.init(args=args)

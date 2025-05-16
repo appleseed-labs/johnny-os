@@ -1,5 +1,7 @@
-# johnny-os
-ROS2 code for our robot
+# Johnny OS
+Complete ROS2 codebase for Johnny, your reforestation companion.
+
+Our project site includes more information about our group.
 
 ## Installation
 

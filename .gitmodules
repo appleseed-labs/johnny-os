@@ -2,3 +2,6 @@
 	path = src/external/ros_tcp_endpoint
 	url = https://github.com/Unity-Technologies/ROS-TCP-Endpoint
 	branch = main-ros2
+[submodule "src/external/swiftnav-ros2"]
+	path = src/external/swiftnav-ros2
+	url = https://github.com/swift-nav/swiftnav-ros2.git

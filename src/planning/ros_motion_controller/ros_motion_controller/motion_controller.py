@@ -4,18 +4,22 @@
 # (c) 2025 Appleseed Labs. CMU Robotics Institute
 # -----------------------------------------------------------------------------
 
+from sympy import N
+import xdg
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist, PoseArray
+from geometry_msgs.msg import Twist, PoseStamped
+from nav_msgs.msg import Path
 from sensor_msgs.msg import NavSatFix
 from sensor_msgs.msg import Imu
 from scipy.spatial.transform import Rotation as R
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32
 import math, time
 import numpy as np
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
+from tf2_geometry_msgs import do_transform_pose
 
 
 class MotionController(Node):
@@ -26,13 +30,12 @@ class MotionController(Node):
 
         # Publishers
         self.twist_publisher = self.create_publisher(Twist, "cmd_vel", 10)
-        self.controller_signal_publisher = self.create_publisher(
-            Bool, "/controller_signal", 10
-        )
 
         # Subscribers
-        self.waypoints_subscription = self.create_subscription(
-            PoseArray, "/waypoints", self.waypointsCb, 10
+        self.create_subscription(Path, "/planning/path", self.pathCb, 10)
+        self.create_subscription(Float32, "/yaw_float", self.yawFloat, 10)
+        self.create_subscription(
+            Bool, "/perception/person_nearby", self.personDetected, 10
         )
 
         # For looking up the robot's position on the map
@@ -44,22 +47,83 @@ class MotionController(Node):
         # Current pose (initialize to None until received)
         self.ego_x = None
         self.ego_y = None
+        self.ego_yaw = None
+
+        # To see the current map coordinates (simply to know where the robot is at in the map)
+        self.map_x = None
+        self.map_y = None
+
+        # Initial pose of robot
+        self.init_robot_x = None
+        self.init_robot_y = None
 
         # Counter to help us track the amount of lookahead_points not found
         self.lookahead_not_found_counter = 0
+        # Counter for person detection
+        self.counter_for_person = 0
         # Initilize timer for control loop
-        self.create_timer(0.1, self.spinController)
+        self.timer = self.create_timer(0.1, self.spinController)
 
-        # NOTE: This is for testing purposes
-        self.controller_signal_publisher.publish(Bool(data=True))
+    def personDetected(self, msg):
+        """
+        See if we detected a person
+        """
+        if msg.data:
+            self.counter_for_person += 1
+        else:
+            self.counter_for_person = 0
 
-    def waypointsCb(self, msg: PoseArray):
+        if self.counter_for_person > 50:
+            self.get_logger().info(f"Going to sleep, a person is detected")
+            time.sleep(10)
+            self.counter_for_person = 0
+            self.get_logger().info("Done with detecting person")
+
+    def transformPose(self, pose_msg: PoseStamped, target_frame: str):
+        """Transform a PoseStamped message to a target frame
+        Args:
+            pose_msg (PoseStamped): The pose to transform
+            target_frame (str): The target frame to transform to
+        Returns:
+            PoseStamped: The transformed pose
+        """
+        if pose_msg.header.frame_id == target_frame:
+            return pose_msg
+
+        try:
+            # Get the latest transform from map to base_link
+            t = self.tf_buffer.lookup_transform(
+                target_frame, pose_msg.header.frame_id, rclpy.time.Time()
+            )
+            # Make shallow copy of pose_msg
+            transformed_pose = PoseStamped()
+            transformed_pose.header.stamp = pose_msg.header.stamp
+            transformed_pose.header.frame_id = target_frame
+            transformed_pose.pose.position.x = t.transform.translation.x
+            transformed_pose.pose.position.y = t.transform.translation.y
+            # transformed_pose.pose = do_transform_pose(pose_msg.pose, t)
+            self.get_logger().info(f"{transformed_pose.pose.position}")
+            return transformed_pose
+        except TransformException as ex:
+            self.get_logger().warning(f"Could not transform pose: {ex}")
+            return None
+
+    def pathCb(self, msg: Path):
         """Callback to get waypoints from path planning"""
         poses = msg.poses
         # Get the needed x, y tuples for waypoints
-        for pose in poses:
+        for pose_stamped in poses:
+            # if pose_stamped.header.frame_id != "base_link":
+            #     # Transform the pose to the ego frame
+            #     pose_stamped = self.transformPose(pose_stamped, "base_link")
+            #     if pose_stamped is None:
+            #         continue
+            pose = pose_stamped.pose
             loc_tuple = (pose.position.x, pose.position.y)
             self.waypoints.append(loc_tuple)
+        self.get_logger().info(
+            f"Got waypoints: {self.waypoints[len(self.waypoints) - 1]}"
+        )
 
     def findLookaheadPoint(self, lookahead_distance):
         """Find a point on the path at lookahead distance ahead of the robot.
@@ -69,7 +133,13 @@ class MotionController(Node):
         """
 
         if self.ego_x is None or self.ego_y is None:
+            self.get_logger().warning("No robot position data available.")
             return None
+
+        # print(
+        #     f"Searching along the path for lookahead point with distance: {lookahead_distance}"
+        # )
+        # print(self.waypoints)
 
         for i in range(len(self.waypoints) - 1):
             p1 = np.array(self.waypoints[i])
@@ -90,8 +160,15 @@ class MotionController(Node):
             # Solve the quadratic equation: at^2 + bt + c = 0
             t = np.roots([a, b, c])
 
+            # Filter out complex roots and get only real values
+            t_real = t[np.isreal(t)].real
+
+            # If no real roots exist, continue to the next segment
+            if len(t_real) == 0:
+                continue
+
             # Choose the valid solution (if real and within the path segment)
-            t = np.max(t)  # We want the largest solution in case of two roots
+            t = np.max(t_real)  # We want the largest solution in case of two roots
 
             if 0 <= t <= 1:  # Ensure the solution is within the path segment [0, 1]
                 lookahead_point = p1 + t * path_vector  # Calculate the lookahead point
@@ -121,7 +198,7 @@ class MotionController(Node):
             robot_heading
         )  # The slope of the line at the current robot orientation
         b = 1  # The coefficient for the y-axis in the line equation
-        c = x_pos * np.tan(self.imu_reading) - y_pos  # The line offset
+        c = x_pos * np.tan(robot_heading) - y_pos  # The line offset
 
         # Distance (N) from the robot's current position to the closest point on the path
         N = abs(a * lookahead_x + b * lookahead_y + c) / np.sqrt(
@@ -147,18 +224,26 @@ class MotionController(Node):
         # Stop if close to goal
         self.get_logger().info("Goal reached!")
         self.get_logger().info(f"Currently at: ({self.ego_x}, {self.ego_y})")
+        # self.get_logger().info(f"In map coordinates at: ({self.map_x}, {self.map_y})")
         self.reset()
-        # Send signal to let waypoint node that we can accept more waypoints
-        self.controller_signal_publisher.publish(Bool(data=True))
 
     def reset(self):
         """Resets key values and the robot"""
         twist_msg = Twist()
+        # To help reset the yaw, we must run the robot for like 2 seconds in forward
+        twist_msg.linear.x = 1.0
+        twist_msg.angular.z = 0.0
+        self.twist_publisher.publish(twist_msg)
+        self.get_logger().info("Going to move forward to reset yaw")
+        time.sleep(2)
+        # Stop the robot
         twist_msg.linear.x = 0.0
         twist_msg.angular.z = 0.0
         self.twist_publisher.publish(twist_msg)
         self.waypoints = []
-        self.timer.cancel()
+        self.init_robot_x = None
+        self.init_robot_y = None
+        # self.timer.cancel()
 
     def findAngLinSpeeds(self, lookahead_point, remaining_distance, adaptive_lookahead):
         """Find the angular and linear speed
@@ -174,7 +259,7 @@ class MotionController(Node):
         # Compute curvature
         loc_cur = np.array([self.ego_x, self.ego_y])
         curvature = self.findCurvature(
-            lookahead_point, self.imu_reading, loc_cur, adaptive_lookahead
+            lookahead_point, self.ego_yaw, loc_cur, adaptive_lookahead
         )
         angular_speed = math.atan(curvature)
 
@@ -182,8 +267,7 @@ class MotionController(Node):
         # NOTE: Let's adjust lin. speed first
         linear_speed = min(0.5 * remaining_distance, 1.0)  # Cap max speed to be 1m/s
         if remaining_distance < 0.75:  # If within 0.75m of goal, slow down
-            linear_speed = min(linear_speed, 0.4)
-
+            linear_speed = min(max(linear_speed, 0.1), 0.4)  # In range of 0.1 - 0.4
         return angular_speed, linear_speed
 
     def findAdaptiveLookahead(self):
@@ -223,37 +307,53 @@ class MotionController(Node):
                 min_dist = distance
                 # self.get_logger().info(f"Distance: {distance}\n")
                 # self.get_logger().info(f"Formula: {max(0.1, min(2.0, distance))}\n")
-                best_lookahead = max(0.4, min(1.5, distance))  # Adjust dynamically
+                best_lookahead = max(1.0, distance)  # Adjust dynamically
 
-        # self.get_logger().info(f"Adaptive lookahead distance: {best_lookahead}")
+        self.get_logger().info(f"Adaptive lookahead distance: {best_lookahead}")
         return best_lookahead
+
+    def yawFloat(self, msg):
+        self.get_logger().info(f"Got yaw {self.ego_yaw}")
+        self.ego_yaw = msg.data
 
     def spinController(self):
         """Compute and publish velocity commands using Pure Pursuit."""
-
+        # return
+        # No waypoints recieved
+        if len(self.waypoints) == 0 or self.ego_yaw is None:
+            # self.get_logger().warning(
+            #     "No waypoints received yet. Skipping control loop."
+            # )
+            return
         try:
             # Get the latest transform from map to base_link
-            t = self.tf_buffer.lookup_transform("base_link", "map", rclpy.time.Time())
+            t = self.tf_buffer.lookup_transform("map", "base_link", rclpy.time.Time())
+            if self.init_robot_x is None or self.init_robot_y is None:
+                # To help get the robot starting position as 0,0
+                self.init_robot_x = t.transform.translation.x
+                self.init_robot_y = t.transform.translation.y
+
+            # self.map_x = t.transform.translation.x
+            # self.map_y = t.transform.translation.y
+
             self.ego_x = t.transform.translation.x
             self.ego_y = t.transform.translation.y
-            self.ego_yaw = R.from_quat(
-                [
-                    t.transform.rotation.x,
-                    t.transform.rotation.y,
-                    t.transform.rotation.z,
-                    t.transform.rotation.w,
-                ]
-            ).as_euler("xyz")[2]
-
+            # self.ego_yaw = R.from_quat(
+            # [
+            #         t.transform.rotation.x,
+            #         t.transform.rotation.y,
+            #         t.transform.rotation.z,
+            #         t.transform.rotation.w,
+            #     ]
+            # ).as_euler("xyz")[2]
+            self.get_logger().info(f"Loc: {self.ego_x}, {self.ego_y}")
+            # self.get_logger().info(
+            #     f"In map coordinates at: ({self.map_x}, {self.map_y})"
+            # )
+            # self.get_logger().info(f"Yaw: {self.ego_yaw}")
         except TransformException as ex:
             self.get_logger().warning(
                 f"Could not find ego transform. Skipping control loop: {ex}"
-            )
-            return
-
-        if len(self.waypoints) == 0:
-            self.get_logger().warning(
-                "No waypoints received yet. Skipping control loop."
             )
             return
 
@@ -263,10 +363,11 @@ class MotionController(Node):
             + (self.waypoints[-1][1] - self.ego_y) ** 2
         )
 
+        # self.get_logger().info(f"Our endpoiunt: {self.waypoints[-1][0]}, {self.waypoints[-1][1]}")
+        self.get_logger().info(f"Got dist: {remaining_distance}")
         # Stop if close to goal
-
         # TODO: Parameterize this distance threshold
-        if remaining_distance < 0.25:
+        if float(remaining_distance) < 0.5:
             self.get_logger().info("We are close to the waypoint!")
             # Stop the robot
             self.stop()
@@ -285,12 +386,15 @@ class MotionController(Node):
             self.get_logger().warn("No valid lookahead point found!")
             self.lookahead_not_found_counter += 1
 
-            # If we have seen the no valid lookahead point then lets stop
-            if self.lookahead_not_found_counter == 20:
+            # FAILSAFE: If we have seen the no valid lookahead point then lets stop
+            if self.lookahead_not_found_counter == 15:
                 # Stop the robot
                 self.stop()
                 self.lookahead_not_found_counter = 0
             return
+
+        # Reset the lookahead_counter to check for consecutive
+        self.lookahead_not_found_counter = 0
 
         # Compute angular and linear speed
         angular_speed, linear_speed = self.findAngLinSpeeds(

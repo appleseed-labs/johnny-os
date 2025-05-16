@@ -88,11 +88,11 @@ def generate_launch_description():
     return LaunchDescription(
         [
             # INFRASTRUCTURE
-            description_launch,
+            # description_launch,
             # robot_state_publisher_node,
             # INTERFACES
             # rosbridge_server,
-            unity_endpoint,
+            # unity_endpoint,
             # PERCEPTION
             # PLANNING
             fix_to_transform_node,

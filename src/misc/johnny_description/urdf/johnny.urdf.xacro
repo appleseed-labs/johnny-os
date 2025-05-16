@@ -1,6 +1,6 @@
 <?xml version='1.0'?>
 
-<robot name="warthog" xmlns:xacro="http://www.ros.org/wiki/xacro">
+<robot name="johnny" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
     <xacro:property name="PI" value="3.1415926535897931" />
 
@@ -30,6 +30,9 @@
     <xacro:property name="chassis_mass" value="100" />
 
     <xacro:property name="dummy_inertia" value="1e-09" />
+
+    <!-- Include the xarm6 urdf -->
+    <xacro:include filename="$(find xarm_description)/urdf/xarm_device_macro.xacro" />
 
     <!--
     Optional paint colors.
@@ -136,6 +139,13 @@
             </geometry>
             <material name="white" />
         </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <mesh filename="package://johnny_description/meshes/amiga_chassis_lowpoly.stl" />
+
+            </geometry>
+        </collision>
     </link>
 
 
@@ -158,6 +168,45 @@
         <origin xyz="0.37 0 1.31" rpy="0 ${PI/6} 0" />
         <parent link="base_link" />
         <child link="lidar_link" />
+    </joint>
+
+    <link name="arm_link" />
+    <joint name="arm_link_joint" type="fixed">
+        <origin xyz="0.68 0 0.63" rpy="0 ${PI/2} 0" />
+        <parent link="base_link" />
+        <child link="arm_link" />
+    </joint>
+
+    <xacro:xarm_device dof="6" attach_to="arm_link" add_gripper="false" />
+
+    <link name="multi_eef_link">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <mesh filename="package://johnny_description/meshes/multi_eef.obj" />
+            </geometry>
+            <material name="light_grey" />
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <mesh filename="package://johnny_description/meshes/multi_eef_collision.obj" />
+            </geometry>
+        </collision>
+    </link>
+    <joint name="multi_eef_joint" type="fixed">
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <parent link="link_eef" />
+        <child link="multi_eef_link" />
+    </joint>
+
+    <link name="gripper_link">
+
+    </link>
+    <joint name="gripper_joint" type="fixed">
+        <origin xyz="-0.139 0 0.125" rpy="0 ${-PI/3} 0" />
+        <parent link="multi_eef_link" />
+        <child link="gripper_link" />
     </joint>
 
 </robot>

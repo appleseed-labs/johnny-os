@@ -3,3 +3,7 @@ install/
 log/
 .vscode/
 *.pyc
+rosbag*
+__pycache__
+src/perception/yolov8_detecter/test
+depth_image.png

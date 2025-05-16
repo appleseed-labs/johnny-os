@@ -12,6 +12,7 @@ from os import error
 from threading import Thread
 import time
 
+
 import rclpy
 from rclpy.node import Node
 from builtin_interfaces.msg import Time as BuiltinTime
@@ -19,6 +20,8 @@ from rclpy.time import Time as RclpyTime
 
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.parameter import Parameter
+
+from matplotlib import pyplot as plt
 
 from random import random
 from sensor_msgs.msg import JointState
@@ -28,11 +31,17 @@ import numpy as np
 
 # from matplotlib import pyplot as plt
 
-from geometry_msgs.msg import Point
-from time import sleep
+from geometry_msgs.msg import Point, Twist
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Image
+
 from std_msgs.msg import Bool, Empty
+from time import sleep
 
 from xarm.wrapper import XArmAPI
+import serial
+from cv_bridge import CvBridge
+
 
 # from ikpy.chain import Chain
 # from ikpy.link import Link
@@ -40,23 +49,88 @@ from xarm.wrapper import XArmAPI
 
 from enum import Enum
 
-# Create an enum that maps the error code to a string
-ERROR_CODE_MAP = {
-    2: "ESTOP_ACTIVE",
-    22: "SELF_COLLISION",
+pos_dictionary = {
+    "home": [
+        -0.32572651,
+        -80.93894022,
+        -14.3142046,
+        -188.32544039,
+        -7.37580029,
+        -170.15998538,
+        0.0,
+    ],
+    "ready": [
+        130.09470834,
+        33.48371084,
+        -139.9335396,
+        -68.80289198,
+        129.62064306,
+        -175.63041452,
+        0.0,
+    ],
+    "seedling_1_pre": [
+        117.616547,
+        -12.89321197,
+        -55.8271168,
+        -53.73828456,
+        99.10324932,
+        -147.33598243,
+        0.0,
+    ],
+    "seedling_1_grab": [115.6613, -10.2879, -56.2885, -50.8607, 97.578, -147.3331, 0.0],
+    "seedling_1_lift": [
+        138.18154925,
+        11.32691724,
+        -77.62907763,
+        -43.34248103,
+        115.49729071,
+        -129.13036308,
+        0.0,
+    ],
+    "over_hole": [-41.4897, 12.6384, -30.3916, -201.077, 73.6514, -170.3068, 0.0],
+    "camera_over_hole": [-58.3486, 11.259, -27.4902, -210.6698, 73.6543, -170.307, 0.0],
+    "to_hole_1": [83.0299, -6.7996, -91.7994, -64.717, 77.3725, -187.4991, 0.0],
+    "to_hole_2": [5.979, -73.9998, -18.5266, -96.1193, 9.008, -196.6823, 0.0],
+    "into_hole": [-30.8998, 32.878, -57.2936, -194.921, 72.2279, -170.3049, 0.0],
+    "sweep_1_start": [
+        -47.4052,
+        40.4668,
+        -111.8521,
+        -149.4101,
+        -51.2849,
+        -158.9844,
+        0.0,
+    ],
+    "sweep_1_end": [-46.9914, 67.4331, -120.2814, -153.5416, -47.5788, -158.9937, 0.0],
+    "sweep_2_start": [
+        -21.4479,
+        30.1746,
+        -52.0257,
+        -153.4955,
+        47.0232,
+        -158.9836,
+        0.0,
+    ],
+    "sweep_2_end": [
+        -32.4677,
+        48.2822,
+        -67.9598,
+        -148.6514,
+        51.1192,
+        -170.1973,
+        0.0,
+    ],
+    "sweep_3_start": [
+        -49.7081,
+        102.6205,
+        -123.6335,
+        -223.697,
+        111.2129,
+        -247.0071,
+        0.0,
+    ],
+    "sweep_3_end": [-49.4795, 80.2942, -97.1986, -219.7065, 127.7964, -246.9978, 0.0],
 }
-
-HOME_Q = [0, 0, 0, 0, 0, 0]
-OVERHEAD_Q = [0, -56.1, -34.9, 0, 0, 0]
-READY_Q = [95.1, -40.6, -17.9, 34.2, -11.3, -23.5]
-
-
-# Create an enum for the pose FSM
-class PoseState(Enum):
-    HOME = 0
-    OVERHEAD = 1
-    READY = 2
-    UNKNOWN = 3
 
 
 class JointTrajectory:
@@ -152,21 +226,16 @@ class XarmControlNode(Node):
             self.get_parameter("planting_time_secs").get_parameter_value().double_value
         )
 
-        self.create_subscription(
-            Empty, "/behavior/start_planting", self.startPlantingCb, 1
-        )
-
-        self.start_driving_pub = self.create_publisher(
-            Empty, "/behavior/start_driving", 1
-        )
-
-        self.is_planting = False
-        self.planting_stop_time = time.time()
-        self.create_timer(0.1, self.checkIfPlantingComplete)
+        self.is_correcting_with_camera = True
+        self.correction_start_time = time.time()
 
         if self.sim_only:
             self.get_logger().info("Sim only mode enabled. Skipping xArm setup.")
             return
+
+        self.FULL_SPEED = 20
+        self.CAREFUL_SPEED = self.FULL_SPEED / 2
+        self.CORRECTION_DURATION = 10.0  # s
 
         self.arm = XArmAPI(ip)
 
@@ -178,168 +247,264 @@ class XarmControlNode(Node):
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
 
+        self.set_joints(
+            q=pos_dictionary["camera_over_hole"], speed=self.CAREFUL_SPEED, wait=True
+        )
+
         self.max_angular_speed = 80
 
-        code, current_joint_angles = self.arm.get_servo_angle()
+        self.q = self.arm.angles
 
-        current_joint_angles = current_joint_angles[
-            :6
-        ]  # Ignore the last joint (gripper)
+        self.rolling_back_started = False
+        self.total_distance_so_far = 0.0
+        self.target_roll_distance = -0.15  # meters
 
-        # self.arm.move_gohome(wait=True, speed=speed)
-        print(current_joint_angles)
-        print(self.arm.angles)
-        # self.goOverhead()
+        # SUBSCRIPTIONS
+        self.create_subscription(
+            Empty, "/behavior/start_planting", self.start_planting_cb, 1
+        )
+        # From the Amiga control node
+        # self.create_subscription(Odometry, "/odom", self.odometry_cb, 1)
 
-        if np.allclose(current_joint_angles, HOME_Q, atol=0.1):
-            self.get_logger().info("Already at home")
-            self.fsm_state = PoseState.HOME
+        # For hole distance correction
+        self.create_subscription(
+            Image, "/camera/camera/depth/image_rect_raw", self.depth_image_cb, 1
+        )
 
-        elif np.allclose(current_joint_angles, OVERHEAD_Q, atol=0.1):
-            self.get_logger().info("Starting at overhead")
-            self.fsm_state = PoseState.OVERHEAD
-            self.goHome(speed=self.max_angular_speed)
+        # PUBLISHERS
+        self.on_plant_complete_pub = self.create_publisher(
+            Empty, "/behavior/on_plant_complete", 1
+        )
+        self.twist_pub = self.create_publisher(Twist, "/cmd_vel", 1)
+        self.joint_state_pub = self.create_publisher(JointState, "/joint_states", 1)
 
-        elif np.allclose(current_joint_angles, READY_Q, atol=0.1):
-            self.get_logger().info("Starting at ready")
-            self.fsm_state = PoseState.READY
-            self.goHome(speed=self.max_angular_speed)
+        self.bridge = CvBridge()
 
+        # self.pick_and_place_seedling()
+        # self.sweep_soil()
+
+        self.start_x = None
+
+        self.x_error_history = np.zeros(10)
+        self.n_samples_collected = 0
+
+    def depth_image_cb(self, msg):
+
+        if not self.is_correcting_with_camera:
+            return
+
+        if time.time() - self.correction_start_time > self.CORRECTION_DURATION:
+            self.get_logger().info("Stopping camera correction")
+            self.is_correcting_with_camera = False
+            self.plant_seedling()
+            return
         else:
-            self.get_logger().error("Starting at unknown position")
-            self.fsm_state = PoseState.UNKNOWN
-            self.goHome(speed=self.max_angular_speed, force=True)
-
-        # self.goOverhead(speed=speed)
-        # self.goReady()
-
-    def checkIfPlantingComplete(self):
-        if self.is_planting and time.time() > self.planting_stop_time:
-            self.get_logger().info("Planting complete.")
-            self.is_planting = False
-            self.start_driving_pub.publish(Empty())
-
-        elif self.is_planting:
-            remaining_time = self.planting_stop_time - time.time()
             self.get_logger().info(
-                f"Planting in progress. {remaining_time:.2f} seconds remaining"
+                f"Camera correction in progress, remaining time: {self.CORRECTION_DURATION - (time.time() - self.correction_start_time):.2f} seconds"
             )
 
-    def startPlantingCb(self, msg):
+        try:
+            # Convert ROS2 Image message to OpenCV image (numpy array)
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
+
+            # Rotate 90 deg clockwise
+            cv_image = np.rot90(cv_image, k=3)
+
+        except Exception as e:
+            self.get_logger().error(f"Error converting image: {str(e)}")
+            return
+
+        min_depth = np.min(cv_image)
+        max_depth = np.max(cv_image)
+        top_90 = min_depth + (max_depth - min_depth) * 0.9
+
+        plt.figure()
+        plt.imshow(cv_image)
+        plt.savefig("depth_image.png")
+        plt.close()
+
+        # Get the indices of the pixels that are more than the top 90% depth
+        mask = cv_image > top_90
+        indices = np.argwhere(mask)
+
+        # Get the average index of the pixels that are more than the top 90% depth
+        if len(indices) > 0:
+            avg_index = np.median(indices, axis=0)
+            print(f"Average index of pixels above top 90% depth: {avg_index}")
+        else:
+            print("No pixels above top 90% depth found.")
+
+        x_error = int(avg_index[0] - (cv_image.shape[0] / 2))
+        y_error = int(avg_index[1] - (cv_image.shape[1] / 2))
+
+        # # Normalize the x_error and y_error to be between -1 and 1
+        x_error = x_error / (cv_image.shape[0] / 2)
+        y_error = y_error / (cv_image.shape[1] / 2)
+
+        # Invert x error so that "forward" is positive
+        x_error = -x_error
+
+        # Make a weighted moving average of the x_error
+        self.x_error_history = np.roll(self.x_error_history, -1)
+        self.x_error_history[-1] = x_error
+        x_error = np.mean(self.x_error_history)
+
+        print(f"x_error: {x_error:.2f}")
+
+        # if abs(x_error) < 5.0 and self.n_samples_collected >= 10:
+        #     self.get_logger().info("Arrived over hole. Starting placement")
+        #     self.is_planting = False
+        #     # self.pick_up_seedling()
+        #     self.plant_seedling()
+        #     return
+
+        self.n_samples_collected += 1
+
+        # Move forward according to the x error
+        twist = Twist()
+        twist.linear.x = x_error * 0.35  # m/s
+
+        if twist.linear.x > 0.10:
+            twist.linear.x = 0.1
+        elif twist.linear.x < -0.1:
+            twist.linear.x = -0.1
+
+        print(f"twist.linear.x: {twist.linear.x:.2f}")
+
+        self.twist_pub.publish(twist)
+
+        # plt.imshow(cv_image)
+        # plt.savefig("depth_image.png")
+
+    # def odometry_cb(self, msg):
+
+    #     if not self.rolling_back_started:
+    #         self.start_x = msg.pose.pose.position.x
+    #         return
+
+    #     target_x = self.start_x + self.target_roll_distance
+
+    #     current_x = msg.pose.pose.position.x
+
+    #     if current_x <= target_x:
+    #         print(f"REACHED TARGET, error = {target_x - current_x}")
+    #         self.rolling_back_started = False
+    #         self.pick_and_place_seedling()
+    #         return
+
+    #     twist = Twist()
+    #     twist.linear.x = -0.15  # m/s
+
+    #     self.twist_pub.publish(twist)
+
+    #     # if self.total_distance_so_far < self.target_roll_distance:
+    #     #     print("DONE TURNING")
+    #     #     self.rolling_back_started = False
+    #     #     self.total_distance_so_far = 0.0
+    #     #     self.pick_and_place_seedling()
+
+    def start_planting_cb(self, msg):
         self.get_logger().info("Received start planting signal")
-        self.is_planting = True
-        self.planting_stop_time = time.time() + self.planting_time_secs
-        self.goReady()
-        self.goHome()
 
-    def setJointPosition(self, q: list[float], speed=25) -> int:
-        self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
+        self.pick_up_seedling()
 
-    def goHome(self, speed=None, force=True):
-        if self.sim_only:
-            return
+        # Enable this to start the camera correction
+        self.get_logger().info("Starting camera correction")
+        self.is_correcting_with_camera = True
+        self.correction_start_time = time.time()
 
-        if speed is None:
-            speed = self.max_angular_speed
+    def pick_up_seedling(self):
 
-        if self.fsm_state == PoseState.READY:
-            self.get_logger().info("Going to overhead from ready")
-            self.goOverhead(speed=speed)
+        self.open_gripper()
 
-        if self.fsm_state == PoseState.OVERHEAD:
-            self.get_logger().info("Going to home from overhead")
+        self.set_joints(q=pos_dictionary["home"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(q=pos_dictionary["ready"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(
+            q=pos_dictionary["seedling_1_pre"], speed=self.FULL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["seedling_1_grab"], speed=self.FULL_SPEED, wait=True
+        )
+        self.close_gripper()
+        self.set_joints(
+            q=pos_dictionary["seedling_1_lift"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(q=pos_dictionary["ready"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(q=pos_dictionary["to_hole_1"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(q=pos_dictionary["to_hole_2"], speed=self.FULL_SPEED, wait=True)
+        self.set_joints(
+            q=pos_dictionary["camera_over_hole"], speed=self.CAREFUL_SPEED, wait=True
+        )
 
-            self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
-            self.fsm_state = PoseState.HOME
+    def plant_seedling(self):
 
-        elif self.fsm_state == PoseState.HOME:
-            self.get_logger().info("Already at home")
-            return
+        self.set_joints(
+            q=pos_dictionary["over_hole"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["into_hole"], speed=self.CAREFUL_SPEED, wait=True
+        )
 
-        elif force:
-            self.get_logger().warning("Going to home from unknown")
+    def sweep_soil(self):
+        self.set_joints(
+            q=pos_dictionary["sweep_1_start"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["sweep_1_end"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["over_hole"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["sweep_2_start"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["sweep_2_end"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["over_hole"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["sweep_3_start"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["sweep_3_end"], speed=self.CAREFUL_SPEED, wait=True
+        )
+        self.set_joints(
+            q=pos_dictionary["over_hole"], speed=self.CAREFUL_SPEED, wait=True
+        )
 
-            self.arm.set_servo_angle(angle=HOME_Q, speed=speed, wait=True)
-            self.fsm_state = PoseState.HOME
+    def set_joints(self, q: list[float], speed=25, wait=True) -> int:
+        return self.arm.set_servo_angle(angle=q, speed=speed, wait=wait)
 
-        else:
-            assert NotImplementedError(
-                "Cannot go home from state {}".format(self.fsm_state)
-            )
+    def open_gripper(self):
+        with serial.Serial("/dev/ttyACM0", 57600, timeout=1) as ser:
+            ser.write(b"O\r\n")
+            time.sleep(0.5)
 
-    def goOverhead(self, speed=None):
-        if self.sim_only:
-            return
+    def close_gripper(self):
+        with serial.Serial("/dev/ttyACM0", 57600, timeout=1) as ser:
+            ser.write(b"C\r\n")
+            time.sleep(1.0)
 
-        if speed is None:
-            speed = self.max_angular_speed
+    def publish_joint_state(self):
 
-        if self.fsm_state == PoseState.READY:
-            self.get_logger().info("Going to overhead from ready")
-            self.arm.set_servo_angle(angle=OVERHEAD_Q, speed=speed, wait=True)
-            self.get_logger().info("Now at overhead position")
-            self.fsm_state = PoseState.OVERHEAD
-            return
+        names = [
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+        ]
 
-        elif self.fsm_state == PoseState.HOME:
-            self.get_logger().info("Going to overhead from home")
-            self.arm.set_servo_angle(angle=OVERHEAD_Q, speed=speed, wait=True)
-            self.get_logger().info("Now at overhead position")
-            self.fsm_state = PoseState.OVERHEAD
-            return
+        angles = self.arm.angles[:6]
 
-        else:
-            self.get_logger().error(f"Unsupported state {self.fsm_state}")
-            return
-
-    def goReady(self, speed=None):
-        if self.sim_only:
-            return
-
-        if speed is None:
-            speed = self.max_angular_speed
-
-        if self.fsm_state == PoseState.OVERHEAD:
-            self.get_logger().info("Going to ready from overhead")
-            self.arm.set_servo_angle(angle=READY_Q, speed=speed, wait=True)
-            self.get_logger().info("Now at ready position")
-            self.fsm_state = PoseState.READY
-            return
-
-        if self.fsm_state == PoseState.HOME:
-            self.get_logger().info("Going to overhead from home")
-            self.goOverhead(speed=speed)
-            self.goReady(speed=speed)
-            return
-
-        elif self.fsm_state == PoseState.READY:
-            self.get_logger().info("Already at ready")
-            return
-
-        else:
-            self.get_logger().error(f"Unsupported state {self.fsm_state}")
-            return
-
-    def handleCode(self, code: int):
-        """
-        Handle the API code returned by the xArm.
-        """
-
-        if code == 0:
-            return  # Everything is ok
-
-        elif code == 9:
-            self.get_logger().error(f"Code 9: xArm is not ready to move.")
-
-        code, [error_code, warn_code] = self.arm.get_err_warn_code()
-
-        if error_code in ERROR_CODE_MAP:
-            self.get_logger().error(
-                f"Could not move to home position: {ERROR_CODE_MAP[error_code]}"
-            )
-        else:
-            self.get_logger().error(f"Unknown error code {error_code} returned by xArm")
-            self.arm.get_err_warn_code(show=True)
+        msg = JointState()
+        msg.position = angles
+        msg.name = names
+        msg.header.stamp = self.get_clock().now().to_msg()
+        self.joint_state_pub.publish(msg)
 
 
 def main(args=None):

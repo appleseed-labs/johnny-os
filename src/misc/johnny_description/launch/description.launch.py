@@ -18,19 +18,23 @@ def generate_launch_description():
             ),
         ]
     )
-    robot_description = {"robot_description": robot_description_content}
 
     node_robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
         output="screen",
-        parameters=[robot_description],
+        parameters=[{"robot_description": robot_description_content}],
     )
 
     joint_state_publisher = Node(
         package="joint_state_publisher",
         executable="joint_state_publisher",
-        parameters=[robot_description],
+        parameters=[
+            {
+                "robot_description": robot_description_content,
+                "source_list": ["/arm_joint_states"],
+            }
+        ],
     )
 
     return LaunchDescription(

@@ -1,7 +1,7 @@
 # Johnny OS
 Complete ROS2 codebase for Johnny, your reforestation companion.
 
-Our project site includes more information about our group.
+Our [project site](https://appleseed-labs.github.io/johnny-os/) includes more information about our group at CMU.
 
 ## Installation
 

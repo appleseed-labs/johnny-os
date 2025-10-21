@@ -136,23 +136,51 @@ def generate_launch_description():
         executable="lidar_filter",
     )
 
+    health_manager_config_dir = os.path.join(
+        get_package_share_directory("health_manager"), "config"
+    )
+    health_manager_config_file = os.path.join(health_manager_config_dir, "params.yaml")
+
+    health_manager = Node(
+        package="health_manager",
+        executable="health_manager",
+        name="health_manager",
+        parameters=[health_manager_config_file],
+        output="screen",
+    )
+
+    supabase_interface = Node(
+        package="supabase_interface",
+        executable="supabase_interface",
+        name="supabase_interface",
+        parameters=[
+            {"robot_name": "Johnny"},
+            {"update_rate": 1.0},
+            {"supabase_url": "https://xbtfajydrwskyxrtuyvq.supabase.co"},
+            {"supabase_key": "sb_publishable_5Rn6bdXdh-VNjnsQG0__-g_3vw9hGyM"},
+        ],
+        output="screen",
+    )
+
     return LaunchDescription(
         [
             # INFRASTRUCTURE
             description_launch,
+            # health_manager,
+            supabase_interface,
             # robot_state_publisher_node,
             # INTERFACES
-            # rosbridge_server,
-            # unity_endpoint,
-            joy_node,
-            joystick_interface,
-            swiftnav_interface,
-            velodyne_driver_node,
-            velodyne_cloud_node,
+            rosbridge_server,
+            unity_endpoint,
+            joy_node,  # Connects to joystick hardware
+            joystick_interface,  # Translates joystick input into command messages
+            # swiftnav_interface,     # Connects to the RTK GNSS
+            # velodyne_driver_node,   # Publishes UDP LiDAR packets
+            # velodyne_cloud_node,    # Translates the UDP LiDAR packets to PointCloud2 messages
             # PERCEPTION
-            lidar_filter,
+            lidar_filter,  # Filters the PointCloud2 messages
             # PLANNING
-            fix_to_transform_node,
+            fix_to_transform_node,  # Convert RTK data to a map -> base_link TF
             # motion_controller,
             # trajectory_planner,
             # waypoint_publisher,

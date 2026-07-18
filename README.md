@@ -3,6 +3,27 @@ Complete ROS2 codebase for Johnny, your reforestation companion.
 
 Our [project site](https://appleseed-labs.github.io/johnny-os/) includes more information about our group at CMU.
 
+> [!NOTE]
+> **Update from 2026: This code is archived.** Johnny OS was
+> solo-developed on the [Farm Robotics Challenge](https://farmroboticschallenge.ai/)
+> deadline: roughly three months of work while I was balancing grad-school classes at CMU.
+> Expect no test coverage, some dead code, and scattered TODOs.
+>
+> That was a deliberate call. On a competition timeline I chose to spend my hours getting a
+> robot to plant *real* seedlings in a *real* field (all of this code runs on hardware, not
+> just in sim) rather than on hygiene for what was fundamentally exploratory code. In a
+> production setting the priorities invert, and I can tell you exactly what I'd fix first:
+>
+> 1. **Vendor discipline & dead code**: prune the commented-out subscriptions/handlers and
+>    stubbed nodes (e.g. `hole_perception`), and finish wiring the `behavior_management` FSM
+>    (several transitions currently only log).
+> 2. **Real test coverage**: the existing tests are ROS lint stubs; add behavioral tests for
+>    the planners and the FSM state transitions.
+> 3. **Observability**: replace `print()` calls with the ROS logger, and add type hints on the
+>    node interfaces.
+>
+> *-Will Heitman (@wheitman)*
+
 ## Installation
 
 This project contains submodules. You *must* clone this repo recursively:
